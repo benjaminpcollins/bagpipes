@@ -1,6 +1,7 @@
 bagpipes/models/grids/*.fits
 ancillary_code/*
 examples/*
+Bluejay/pipes/*
 
 #################################
 

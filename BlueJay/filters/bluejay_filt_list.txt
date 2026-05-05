@@ -1,0 +1,17 @@
+filters/f090w
+filters/f115w
+filters/f125w
+filters/f140w
+filters/f150w
+filters/f160w
+filters/f200w
+filters/f277w
+filters/f356w
+filters/f410m
+filters/f444w
+filters/f606w
+filters/f814w
+filters/f770w
+filters/f1000w
+filters/f1800w
+filters/f2100w

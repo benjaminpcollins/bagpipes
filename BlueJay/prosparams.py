@@ -126,7 +126,7 @@ def logmass_to_masses(logmass=None, logsfr_ratios=None, zred=None, **extras):
     return m1 * coeffs
 
 
-def build_model(objid, zred=2.50, waverange=None, add_duste=True,
+def build_model(objid, zred=None, waverange=None, add_duste=True,
                 add_agn=False, add_neb = True, fit_afe=False,
                 has_z = True,**extras):
     """Build a prospect.models.SedModel object
@@ -434,7 +434,7 @@ if __name__=='__main__':
     run_params["zred"] = 2.50
 
     run_params["param_file"] = __file__
-    run_params["outfile"] = "mock_prospector"
+    run_params["outfile"] = ""
     
     # add in dynesty settings
     run_params['dynesty'] = True

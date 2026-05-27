@@ -41,7 +41,7 @@ def build_obs(objid, **extras):
     """
     # Read the filter paths directly from the text file
     # This automatically strips out newlines and keeps the exact order
-    with open("filters/bluejay_filt_list.txt", "r") as f:
+    with open("filters/complete_filt_list.txt", "r") as f:
         raw_filter_paths = [line.strip() for line in f if line.strip()]
 
     # Map file paths to Prospector's sedpy database names
@@ -59,10 +59,15 @@ def build_obs(objid, **extras):
         'filters/f444w': 'jwst_f444w',
         'filters/f606w': 'acs_wfc_f606w',
         'filters/f814w': 'acs_wfc_f814w',
+        'filters/f560w': 'jwst_f560w',
         'filters/f770w': 'jwst_f770w',
         'filters/f1000w': 'jwst_f1000w',
+        'filters/f1130w': 'jwst_f1130w',
+        'filters/f1280w': 'jwst_f1280w',
+        'filters/f1500w': 'jwst_f1500w',
         'filters/f1800w': 'jwst_f1800w',
-        'filters/f2100w': 'jwst_f2100w'
+        'filters/f2100w': 'jwst_f2100w',
+        'filters/f2550w': 'jwst_f2550w'
     }
 
     # Convert the ordered paths into the ordered sedpy names
@@ -108,10 +113,15 @@ def to_dust1(dust1_fraction=None, dust1=None, dust2=None, **extras):
 # modify to increase nbins
 nbins_sfh = 7
     
-def zred_to_agebins(zred=None,agebins=None,**extras):
-    tuniv = cosmo.age(zred).value[0]*1e9
-    tbinmax = (tuniv*0.9)
-    agelims = [0.0,7.4772] + np.linspace(8.0,np.log10(tbinmax),nbins_sfh-2).tolist() + [np.log10(tuniv)]
+# Now exactly matches Bagpipes
+def zred_to_agebins(zred, z_limit_sfh=20.0, nbins_sfh=7):
+    tuniv = cosmo.age(zred).value*1e9   # Age of the universe at the observed redshift in years
+    #tbinmax = tuniv-cosmo.age(z_limit_sfh).value*1e9 # Maximum age bin edge corresponding to z_limit_sfh
+    tbinmax = tuniv*0.95
+    # Compute edges in logarithmic space
+    log_edges = np.append(np.array([0.0, 6.7, 7.0]), np.linspace(7.0, np.log10(tbinmax), int(nbins_sfh-1))[1:])
+    agelims = log_edges.tolist()
+    # Format into Prospector's required (N, 2) shape array
     agebins = np.array([agelims[:-1], agelims[1:]])
     return agebins.T
 
@@ -190,19 +200,12 @@ def build_model(objid, zred=None, waverange=None, add_duste=True,
     # --- Continuity SFH ----
     # ----------------------------
     # A non-parametric SFH model of mass in fixed time bins with a smoothness prior
-
-    if has_z:
-        tuniv = cosmo.age(zred).value
-    else:
-        tuniv = 13.7
         
-    agelims_Myr = np.append( np.logspace( np.log10(30.0), np.log10(0.8*tuniv*1000), 12), [0.9*tuniv*1000, tuniv*1000])
-    agelims = np.concatenate( ( [0.0], np.log10(agelims_Myr*1e6) ))
-    agebins = np.array([agelims[:-1], agelims[1:]]).T
-    nbins = len(agelims) - 1
+    agebins = zred_to_agebins(zred=zred, nbins_sfh=nbins_sfh)
+    nbins = agebins.shape[0]    
 
+    print(f"SFH: Non-parametric SFH with {nbins} bins")
     
-
     # This is the *total*  mass formed, as a variable
     model_params["logmass"]    = {"N": 1, "isfree": True,
                                   "init": 10.,
@@ -221,7 +224,7 @@ def build_model(objid, zred=None, waverange=None, add_duste=True,
     model_params["agebins"]    = {'N': nbins, 'isfree': False,
                                   'init': agebins,
                                   'units': 'log(yr)'}
-
+    
     # This controls the distribution of SFR(t) / SFR(t+dt). It has nbins-1 components.
     model_params["logsfr_ratios"] = {'N': nbins-1, 'isfree': True,
                                      'init': np.full(nbins-1, 0.0),  # constant SFH
@@ -480,8 +483,7 @@ if __name__=='__main__':
     output = prospect.fitting.fit_model(obs, model, sps, noise, lnprobfn=lnprobfn_fixed, **run_params)
 
     # Get unique name for the output file
-    hfile = "{0}_{1}_{2}_{3}_mcmc.h5".format(
-        run_params["outfile"], 
+    hfile = "{0}_{1}_{2}_mcmc.h5".format(
         run_params["objid"], 
         run_params["output_tag"],
         int(time.time())

@@ -78,8 +78,8 @@ def build_obs(objid, **extras):
     for path in raw_filter_paths:
         mapped_name = filter_mapping[path]
         
-        if path.endswith('.txt'):
-            # 🚀 For custom top-hat text files: load directly using sedpy.observate.Filter
+        if 'alma' in path:
+            # For custom top-hat text files: load directly using sedpy.observate.Filter
             custom_filt = sedpy.observate.Filter(filename=path)
             custom_filt.name = mapped_name # Give it your designated nick-name
             loaded_filters.append(custom_filt)

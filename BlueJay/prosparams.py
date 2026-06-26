@@ -73,12 +73,25 @@ def build_obs(objid, **extras):
         'filters/alma_band7': 'alma_band7'
     }
 
-    # Convert the ordered paths into the ordered sedpy names
-    filter_name = [filter_mapping[path] for path in raw_filter_paths]
+    # Generate the proper Filter instances manually
+    loaded_filters = []
+    for path in raw_filter_paths:
+        mapped_name = filter_mapping[path]
+        
+        if path.endswith('.txt'):
+            # 🚀 For custom top-hat text files: load directly using sedpy.observate.Filter
+            custom_filt = sedpy.observate.Filter(filename=path)
+            custom_filt.name = mapped_name # Give it your designated nick-name
+            loaded_filters.append(custom_filt)
+        else:
+            # For native database filters: load via sedpy standard library
+            # load_filters always returns a list, so we grab the first element [0]
+            native_filt = sedpy.observate.load_filters([mapped_name])[0]
+            loaded_filters.append(native_filt)
 
     # Create the obs dictionary and load filters
     obs = {}
-    obs['filters'] = sedpy.observate.load_filters(filter_name)
+    obs['filters'] = loaded_filters
     obs['phot_wave'] = np.array([f.wave_effective for f in obs['filters']])
     
     # Load the mock file
@@ -91,7 +104,7 @@ def build_obs(objid, **extras):
     obs['maggies_unc'] = np.array(flux_err_ujy) * 1e-6 / 3631
     
     # Enable all 17 photometry points for the fit
-    obs['phot_mask'] = np.ones(len(filter_name), dtype='bool')
+    obs['phot_mask'] = np.ones(len(loaded_filters), dtype='bool')
     
     # Set elements related to spectral fitting to None
     obs = fix_obs(obs)

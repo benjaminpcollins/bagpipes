@@ -41,7 +41,7 @@ def build_obs(objid, **extras):
     """
     # Read the filter paths directly from the text file
     # This automatically strips out newlines and keeps the exact order
-    with open("filters/complete_filt_list.txt", "r") as f:
+    with open("filters/full_miri+alma67_filt_list.txt", "r") as f:
         raw_filter_paths = [line.strip() for line in f if line.strip()]
 
     # Map file paths to Prospector's sedpy database names
@@ -67,7 +67,10 @@ def build_obs(objid, **extras):
         'filters/f1500w': 'jwst_f1500w',
         'filters/f1800w': 'jwst_f1800w',
         'filters/f2100w': 'jwst_f2100w',
-        'filters/f2550w': 'jwst_f2550w'
+        'filters/f2550w': 'jwst_f2550w',
+        # Added custom ALMA bands 6 and 7
+        'filters/alma_band6': 'alma_band6',
+        'filters/alma_band7': 'alma_band7'
     }
 
     # Convert the ordered paths into the ordered sedpy names

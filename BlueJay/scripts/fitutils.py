@@ -4,6 +4,7 @@ import numpy as np
 import pickle as pkl
 import pandas as pd
 import prospect.io.read_results as reader
+from prospect.models.transforms import logsfr_ratios_to_sfrs
 from prospect.utils.plotting import get_percentiles, get_best
 from corner import quantile
 import h5py
@@ -240,7 +241,7 @@ def write_alma_transmission_curves(filter_name, central_freq_ghz, bandwidth_ghz)
     print(f"💾 Saved tophat filter to: {filename}")
 
 
-def plot_dual_corner(galaxy_id, data1, label1, data2, label2, title="Galaxy", mock_data=None, 
+def plot_dual_corner(galaxy_id, data1, label1, data2, label2, title=f"Galaxy", mock_data=None, 
                      save_dir="/Users/benjamincollins/University/PhD/Code/bagpipes/BlueJay/comparison/mock_fit", 
                      scale_dust1=False, scale_dust2=True,
                      colour1="orange", colour2="dodgerblue",
@@ -423,7 +424,7 @@ def plot_dual_corner(galaxy_id, data1, label1, data2, label2, title="Galaxy", mo
     
     
     
-    fig.suptitle(f"{label1} vs. {label2}\n{title} {galaxy_id}", fontsize=32, y=1.0, fontweight="bold")
+    fig.suptitle(title, fontsize=32, y=1.0, fontweight="bold")
     
     if save_fig:
         fig_path = os.path.join(save_dir, f'{galaxy_id}_corner.png')
@@ -431,6 +432,86 @@ def plot_dual_corner(galaxy_id, data1, label1, data2, label2, title="Galaxy", mo
         
     plt.show()
     plt.close()
+    
+    
+    
+    
+def plot_sfh_prospector(h5_file, figname=None):
+    # Load PROSPECTOR results
+    results, obs, model = reader.results_from(h5_file)
+
+    imax = np.argmax(results['lnprobability'])
+
+    map_parameters = results['chain'][imax, :].copy()
+
+    # Build the MAP dictionary
+    MAP = {}
+    for a,b in zip(results['theta_labels'], map_parameters):
+        MAP[a] = b
+
+    zred = MAP['zred']
+    logmass = MAP['logmass']
+    agebins = results['model_params'][8]['init']    # 8 for agebins
+
+    print(len(agebins))
+
+    dt = 10**agebins[:, 1] - 10**agebins[:, 0]
+
+    # Collect logsfr_ratios
+    logsfr_ratios = np.array([MAP[f"logsfr_ratios_{i}"] for i in range(1, len([k for k in MAP if k.startswith("logsfr_ratios_")])+1)])        
+    # Convert to SFRs
+    sfh_best = logsfr_ratios_to_sfrs(logmass, logsfr_ratios, agebins)
+
+    # Sample from the chains!
+    n_steps = results['chain'].shape[0]
+    # Take 500 weighted posterior samples from the chain
+    sample_indices = np.random.choice(n_steps, size=500, p=results['weights']/np.sum(results['weights']))
+    # Get the full set of parameters from the chain
+    samples = results['chain'][sample_indices, :]
+
+    sfh_samples = []
+    for params_i in samples:
+        new_map = {}
+        for a,b in zip(results['theta_labels'], params_i):
+            new_map[a] = b
+        # Get logsfr_samples
+        logsfr_sample = np.array([new_map[f"logsfr_ratios_{i}"] for i in range(1, len([k for k in new_map if k.startswith("logsfr_ratios_")])+1)])
+        sfh_sample = logsfr_ratios_to_sfrs(logmass, logsfr_sample, agebins)
+        sfh_samples.append(sfh_sample)
+
+    # Takes the per-pixel percentiles such that the final spectra are not actual spectra of Prospectors parameter space
+    sfh_lower = np.percentile(sfh_samples, 16, axis=0)
+    sfh_median = np.percentile(sfh_samples, 50, axis=0)
+    sfh_upper = np.percentile(sfh_samples, 84, axis=0)
+
+    # Convert log age bins to linear time (yr)
+    bin_edges = 10**agebins  # shape (nbins, 2)
+
+    bin_edges *= 1e-9
+
+    bin_starts = bin_edges[:, 0]
+
+    fig, ax = plt.subplots(figsize=(10, 5))
+
+    # Plot the Median SFH
+    ax.step(bin_starts, sfh_median, where='post', color='black', lw=2, label='Median SFH')
+
+    # Plot the MAP SFH
+    ax.step(bin_starts, sfh_best, where='post', color='crimson', lw=2, label='MAP SFH')
+
+    # Plot the Uncertainty (16th-84th percentile)
+    ax.fill_between(bin_starts, sfh_lower, sfh_upper, step="post", color='gray', alpha=0.4)
+
+    # Formatting
+    ax.set_xlabel('Lookback Time (Gyr)', fontsize=14)
+    ax.set_ylabel('SFR ($M_\odot yr^{-1}$)', fontsize=14)
+    #ax.invert_xaxis() # Crucial: Lookback time goes from now (left) to past (right)
+    ax.legend()
+    #plt.grid(True, which="both", ls="-", alpha=0.2)
+    plt.tight_layout()
+    if figname:
+        plt.savefig(f"/Users/benjamincollins/University/PhD/Code/bagpipes/BlueJay/pipes/plots/mock_fit/{figname}")
+    plt.show()
     
     
     
@@ -485,3 +566,34 @@ def check_for_overlap(peaks1, peaks2, tolerance=0.1):
             if abs(p1 - p2) < tolerance:
                 overlaps.append((p1, p2))
     return overlaps
+
+
+
+
+
+def plot_corner(galaxy_id, data, color="Orange", title="Galaxy"):
+    # Select the labels you want to see
+    # Using your existing labels: ['logmass', 'logzsol', 'dust2', 'gas_logu']
+    plot_labels = ['logmass', 'logzsol', 'dust2', 'duste_gamma', 'dust_index', 'duste_qpah', 'duste_umin', 'gas_logu']
+    
+    # Extract the samples for these specific labels
+    samples = np.array([data['params'][l]['samples'] for l in plot_labels]).T
+    
+    # Create the corner plot
+    fig = corner.corner(
+        samples,
+        labels=[r"$\log_{10}(M_*)$", r"$\log_{10}(Z/Z_\odot)$", r"$A_V$", r"Dust $\gamma$", "Dust Index", r"Dust $q_{PAH}$", r"Dust $U_{min}$", r"Dust $U_{min}$", r"$\log_{10}(U)$"],
+        quantiles=[0.16, 0.5, 0.84],
+        weights=data['meta']['weights'],
+        show_titles=True,
+        title_kwargs={"fontsize": 12},
+        color=color,
+        smooth=1.0, # Helps visualize bimodality with only 500 samples
+        # --- ADD THESE THREE LINES ---
+        plot_datapoints=False,  # Suppresses the black dots
+        fill_contours=True,     # Fills the 1/2/3 sigma levels with color
+        plot_density=False      # Suppresses the grey background 'cloud'
+    )
+    
+    fig.suptitle(title, fontsize=16)
+    plt.show()

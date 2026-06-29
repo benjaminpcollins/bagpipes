@@ -230,179 +230,36 @@ def write_alma_transmission_curves(filter_name, central_freq_ghz, bandwidth_ghz)
     print(f"💾 Saved tophat filter to: {filename}")
 
 
-
-def plot_dual_corner(galaxy_id, comparison_dir):
-    
-    file = os.path.join(comparison_dir, f'pickles/{galaxy_id}_comp.pkl')  
-    with open(file, 'rb') as f:
-        data = pkl.load(f)
-        
-        # Load the individual fit results
-        b_data = data['bagpipes']
-        p_data = data['prospector']
-    
-    # Define internal keys and display labels
-    # Make sure these match the keys in your b_data['params'] and p_data['params']
-    plot_keys = ['logmass', 'logzsol', 'dust2', 'duste_gamma', 'dust_index', 'duste_qpah', 'duste_umin', 'gas_logu']
-    
-    labels = [r"$\log_{10}(M_*)$", r"$\log_{10}(Z/Z_\odot)$", r"$A_V$", 
-              r"Dust $\gamma$", "Dust Index", r"Dust $q_{PAH}$", 
-              r"Dust $U_{min}$", r"$\log_{10}(U)$"]
-
-    # Extract and Transform Samples
-    # Bagpipes
-    b_samps = np.array([b_data['params'][k]['samples'] for k in plot_keys]).T
-    # Prospector (Applying the Av conversion factor 1.086 to the 3rd column: index 2)
-    p_samps = np.array([p_data['params'][k]['samples'] for k in plot_keys]).T
-    
-    samples_list = [b_samps, p_samps]
-    sample_labels = ["Bagpipes", "Prospector"]
-    colors = ["orange", "dodgerblue"]
-
-    # Calculate Global Range (So both fits are visible)
-    ndim = b_samps.shape[1]
-    plot_range = []
-    for dim in range(ndim):
-        dim_min = min(np.nanmin(b_samps[:, dim]), np.nanmin(p_samps[:, dim]))
-        dim_max = max(np.nanmax(b_samps[:, dim]), np.nanmax(p_samps[:, dim]))
-        
-        plot_range.append([dim_min, dim_max])
-
-    # 4. Handle Weights 
-    # Prospector weights from Dynesty
-    p_weights = p_data['meta']['weights']
-    # Bagpipes weights (Usually None/Equal, so create ones)
-    b_weights = np.ones(len(b_samps))
-    
-    # Normalize weights so histograms have comparable heights
-    # (Matching the logic from your provided demo script)
-    b_weights *= (len(p_samps) / len(b_samps))
-
-    # 5. Base Corner Settings
-    shared_kwargs = dict(
-        labels=labels,
-        range=plot_range,
-        smooth=0.9,
-        quantiles=[0.16, 0.5, 0.84],
-        plot_density=False,
-        plot_datapoints=False,
-        fill_contours=True,
-        show_titles=False, # We disable automatic titles to avoid overlaps
-        max_n_ticks=3,
-        hist_kwargs=dict(density=True)
-    )
-
-    # 6. Plotting
-    # First: Bagpipes
-    fig = corner.corner(
-        b_samps,
-        labels=labels,
-        range=plot_range,
-        color="orange",
-        label_kwargs={"fontsize": 14},
-        weights=b_weights,
-        smooth=0.9,
-        quantiles=[0.16, 0.5, 0.84],
-        plot_density=False,
-        plot_datapoints=False,
-        fill_contours=True,
-        show_titles=False,
-        max_n_ticks=4,
-        hist_kwargs={'color': 'orange', 'linewidth': 2, 'density': True}
-    )
-
-    # Second: Prospector
-    # We turn off 'fill_contours' for the second one so we can see through it
-    corner.corner(
-        p_samps,
-        fig=fig,
-        range=plot_range,
-        color="dodgerblue",
-        label_kwargs={"fontsize": 14}, 
-        weights=p_weights,
-        smooth=0.9,
-        quantiles=[0.16, 0.5, 0.84],
-        plot_density=False,
-        plot_datapoints=False,
-        fill_contours=True, 
-        show_titles=False,
-        max_n_ticks=4,
-        hist_kwargs={'color': 'dodgerblue', 'linewidth': 2, 'density': True}
-    )
-
-    # 7. Add Legend and Title
-    plt.legend(
-        handles=[
-            mlines.Line2D([], [], color=colors[i], label=sample_labels[i], lw=4)
-            for i in range(len(colors))
-        ],
-        fontsize=20, frameon=False,
-        bbox_to_anchor=(1, ndim), loc="upper right"
-    )
-    
-    ndim = b_samps.shape[1]
-    axes = np.array(fig.axes).reshape((ndim, ndim))
-    
-    for i in range(ndim):
-        ax = axes[i, i]
-        
-        # 2. Extract stats for Bagpipes (Orange)
-        b_p = b_data['params'][plot_keys[i]]
-        b_val, b_plus, b_minus = b_p['q50'], b_p['q84'] - b_p['q50'], b_p['q50'] - b_p['q16']
-        
-        # 3. Extract stats for Prospector (Black/Blue)
-        p_p = p_data['params'][plot_keys[i]]
-        p_val, p_plus, p_minus = p_p['q50'], p_p['q84'] - p_p['q50'], p_p['q50'] - p_p['q16']
-        
-        # Special Case: If it's Av (index 2), apply the 1.086 scale to the text labels too
-        if i == 2:
-            b_val, b_plus, b_minus = b_val, b_plus, b_minus # Bagpipes is already Av
-            p_val, p_plus, p_minus = p_val*1.086, p_plus*1.086, p_minus*1.086
-        
-        # 4. Create the strings
-        # Use \text{} or raw strings to handle the LaTeX formatting
-        b_str = f"${b_val:.2f}^{{+{b_plus:.2f}}}_{{-{b_minus:.2f}}}$"
-        p_str = f"${p_val:.2f}^{{+{p_plus:.2f}}}_{{-{p_minus:.2f}}}$"
-
-        # 5. Set the title
-        # We use a newline \n to stack them. Note: 'y' controls the vertical height.
-        # 4. Place individual text objects (Manually colored)
-        # x=0.5 centers it. y=1.02 and 1.15 stack them above the plot.
-        ax.text(0.5, 1.15, b_str, color="orange", transform=ax.transAxes, 
-                fontsize=14, ha='center', va='bottom', fontweight='bold')
-        
-        ax.text(0.5, 1.02, p_str, color="dodgerblue", transform=ax.transAxes, 
-                fontsize=14, ha='center', va='bottom', fontweight='bold')
-        
-        # 6. Coloring the text
-        # To get specific colors for specific lines of the title, 
-        # we can use ax.annotate or just rely on the labels in the legend.
-        # But for absolute clarity, we can color the whole title block:
-        #ax.title.set_color('black') # Or 'darkgrey' to be neutral
-    
-    fig.suptitle(f"Bagpipes vs. Prospector\nGalaxy {galaxy_id}", fontsize=24, y=1.0)
-    
-    fig_path = os.path.join(comparison_dir, 'corner_plots', f'{galaxy_id}_corner.png')
-    plt.savefig(fig_path, dpi=300, bbox_inches='tight')
-    plt.close()
-
-
-
-def plot_corner_mock(galaxy_id, data1, label1, data2, label2, mock_data, save_dir, scale_dust1=False, scale_dust2=True):
+def plot_dual_corner(galaxy_id, data1, label1, data2, label2, mock_data=None, 
+                     save_dir="/Users/benjamincollins/University/PhD/Code/bagpipes/BlueJay/comparison/mock_fit", 
+                     scale_dust1=False, scale_dust2=True,
+                     colour1="orange", colour2="dodgerblue"):
     """Figure to plot corner plot of two posterior distributions, given that they are stored in the same format.
 
     Args:
-        galaxy_id (int): ID of the galaxy
-        data1 (dict): Output data of the first fit
-        label1 (str): String describing the first fit
-        data2 (dict): Output data of the second fit
-        label2 (str): String describing the second fit
-        mock_data (dict): Dictionary containing the real galaxy properties
-        save_dir (str): Output directory for the figure
+        galaxy_id (int): 
+            ID of the galaxy
+        data1 (dict): 
+            Output data of the first fit
+        label1 (str): 
+            String describing the first fit
+        data2 (dict): 
+            Output data of the second fit
+        label2 (str): 
+            String describing the second fit
+        mock_data (dict): 
+            Dictionary containing the real galaxy properties in case of mock fit, otherwise None
+        save_dir (str): 
+            Output directory for the figure
+        scale_dust1 (bool):
+            Rescale dust2 parameter from optical thickness to Av (Only needed for Prospector)
+        scale_dust2 (bool):
+            Rescale dust2 parameter from optical thickness to Av (Only needed for Prospector)
+        colour1 (str):
+            Colour for first dataset (default: orange)
+        colour2 (str):
+            Colour for second dataset (default: dodgerblue)
     
-    Note:
-        Data 1 is displayed in Orange
-        Data 2 is displayed in Blue
     """
     # Define internal keys and display labels
     plot_keys = ['logmass', 'logzsol', 'dust2', 'duste_gamma', 'dust_index', 'duste_qpah', 'duste_umin', 'gas_logu']
@@ -423,7 +280,7 @@ def plot_corner_mock(galaxy_id, data1, label1, data2, label2, mock_data, save_di
     
     samples_list = [a_samps, b_samps]
     sample_labels = [label1, label2]
-    colors = ["orange", "dodgerblue"]
+    colors = [colour1, colour2]
 
     # Calculate Global Range (So both fits are visible)
     ndim = b_samps.shape[1]
@@ -452,7 +309,7 @@ def plot_corner_mock(galaxy_id, data1, label1, data2, label2, mock_data, save_di
         a_samps,
         labels=labels,
         range=plot_range,
-        color="orange",
+        color=colors[0],
         label_kwargs={"fontsize": 14},
         weights=a_weights,
         smooth=0.9,
@@ -462,7 +319,7 @@ def plot_corner_mock(galaxy_id, data1, label1, data2, label2, mock_data, save_di
         fill_contours=True,
         show_titles=False,
         max_n_ticks=4,
-        hist_kwargs={'color': 'orange', 'linewidth': 2, 'density': True}
+        hist_kwargs={'color': colors[0], 'linewidth': 2, 'density': True}
     )
 
     # Second
@@ -471,7 +328,7 @@ def plot_corner_mock(galaxy_id, data1, label1, data2, label2, mock_data, save_di
         b_samps,
         fig=fig,
         range=plot_range,
-        color="dodgerblue",
+        color=colors[1],
         label_kwargs={"fontsize": 14}, 
         weights=b_weights,
         smooth=0.9,
@@ -481,7 +338,7 @@ def plot_corner_mock(galaxy_id, data1, label1, data2, label2, mock_data, save_di
         fill_contours=True, 
         show_titles=False,
         max_n_ticks=4,
-        hist_kwargs={'color': 'dodgerblue', 'linewidth': 2, 'density': True}
+        hist_kwargs={'color': colors[2], 'linewidth': 2, 'density': True}
     )
 
     # 7. Add Legend and Title
@@ -494,20 +351,22 @@ def plot_corner_mock(galaxy_id, data1, label1, data2, label2, mock_data, save_di
         bbox_to_anchor=(1, ndim), loc="upper right"
     )
     
-    true_params = mock_data["true_params"][()]
+    # Only add text box with true parameters if we have mock data!
+    if mock_data:
+        true_params = mock_data["true_params"][()]
 
-    real_values = "True Properties:\n\n"
-    for i, p in enumerate(true_params.values()): # iterating mock_data dictionary
-            real_values += f"{labels[i]}: {p}\n"
-    
-    box_style = dict(
-        boxstyle='round,pad=0.5', # Shapes: 'square', 'round', 'larrow', etc.
-        facecolor='wheat',         # Inside color of the box
-        edgecolor='orange',        # Border color
-        alpha=0.5                  # Transparency (0 to 1)
-    )
-    
-    plt.text(-4.8, 2.5, s=real_values, fontsize=18, bbox=box_style)
+        real_values = "True Properties:\n\n"
+        for i, p in enumerate(true_params.values()): # iterating mock_data dictionary
+                real_values += f"{labels[i]}: {p}\n"
+        
+        box_style = dict(
+            boxstyle='round,pad=0.5', # Shapes: 'square', 'round', 'larrow', etc.
+            facecolor='wheat',         # Inside color of the box
+            edgecolor='orange',        # Border color
+            alpha=0.5                  # Transparency (0 to 1)
+        )
+        
+        plt.text(-4.8, 2.5, s=real_values, fontsize=18, bbox=box_style)
     
     ndim = a_samps.shape[1]
     axes = np.array(fig.axes).reshape((ndim, ndim))

@@ -1,11 +1,23 @@
+import os
+import glob
+import numpy as np
+import pickle as pkl
+import pandas as pd
+import prospect.io.read_results as reader
+from prospect.utils.plotting import get_percentiles, get_best
+from corner import quantile
+import h5py
+
 import corner
 import matplotlib.lines as mlines
 import matplotlib.pyplot as plt
-import numpy as np 
 import matplotlib as mpl
 
 mpl.rcParams["font.family"] = "serif"  # override bagpipes' Helvetica request
 mpl.rcParams["text.usetex"] = True
+
+os.environ['PATH'] = os.environ['PATH'] + os.pathsep + '/Library/TeX/texbin'
+
     
 # Increase tick label size and thickness
 mpl.rcParams['xtick.labelsize'] = 14
@@ -18,8 +30,6 @@ from astropy.cosmology import WMAP9 as cosmo
 from astropy.io import fits
 from astropy.table import Table
 from sedpy import observate
-
-import os
 
 from scipy.stats import gaussian_kde
 from scipy.signal import find_peaks
@@ -230,14 +240,15 @@ def write_alma_transmission_curves(filter_name, central_freq_ghz, bandwidth_ghz)
     print(f"💾 Saved tophat filter to: {filename}")
 
 
-def plot_dual_corner(galaxy_id, data1, label1, data2, label2, mock_data=None, 
+def plot_dual_corner(galaxy_id, data1, label1, data2, label2, title="Galaxy", mock_data=None, 
                      save_dir="/Users/benjamincollins/University/PhD/Code/bagpipes/BlueJay/comparison/mock_fit", 
                      scale_dust1=False, scale_dust2=True,
-                     colour1="orange", colour2="dodgerblue"):
+                     colour1="orange", colour2="dodgerblue",
+                     save_fig=True):
     """Figure to plot corner plot of two posterior distributions, given that they are stored in the same format.
 
     Args:
-        galaxy_id (int): 
+        galaxy_id (int) 
             ID of the galaxy
         data1 (dict): 
             Output data of the first fit
@@ -310,7 +321,7 @@ def plot_dual_corner(galaxy_id, data1, label1, data2, label2, mock_data=None,
         labels=labels,
         range=plot_range,
         color=colors[0],
-        label_kwargs={"fontsize": 14},
+        label_kwargs={"fontsize": 22},
         weights=a_weights,
         smooth=0.9,
         quantiles=[0.16, 0.5, 0.84],
@@ -329,7 +340,7 @@ def plot_dual_corner(galaxy_id, data1, label1, data2, label2, mock_data=None,
         fig=fig,
         range=plot_range,
         color=colors[1],
-        label_kwargs={"fontsize": 14}, 
+        label_kwargs={"fontsize": 22}, 
         weights=b_weights,
         smooth=0.9,
         quantiles=[0.16, 0.5, 0.84],
@@ -338,7 +349,7 @@ def plot_dual_corner(galaxy_id, data1, label1, data2, label2, mock_data=None,
         fill_contours=True, 
         show_titles=False,
         max_n_ticks=4,
-        hist_kwargs={'color': colors[2], 'linewidth': 2, 'density': True}
+        hist_kwargs={'color': colors[1], 'linewidth': 2, 'density': True}
     )
 
     # 7. Add Legend and Title
@@ -347,7 +358,7 @@ def plot_dual_corner(galaxy_id, data1, label1, data2, label2, mock_data=None,
             mlines.Line2D([], [], color=colors[i], label=sample_labels[i], lw=4)
             for i in range(len(colors))
         ],
-        fontsize=20, frameon=False,
+        fontsize=28, frameon=False,
         bbox_to_anchor=(1, ndim), loc="upper right"
     )
     
@@ -355,7 +366,7 @@ def plot_dual_corner(galaxy_id, data1, label1, data2, label2, mock_data=None,
     if mock_data:
         true_params = mock_data["true_params"][()]
 
-        real_values = "True Properties:\n\n"
+        real_values = "Mock values:\n\n"
         for i, p in enumerate(true_params.values()): # iterating mock_data dictionary
                 real_values += f"{labels[i]}: {p}\n"
         
@@ -366,7 +377,7 @@ def plot_dual_corner(galaxy_id, data1, label1, data2, label2, mock_data=None,
             alpha=0.5                  # Transparency (0 to 1)
         )
         
-        plt.text(-4.8, 2.5, s=real_values, fontsize=18, bbox=box_style)
+        plt.text(-5.6, 4.0, s=real_values, fontsize=28, bbox=box_style)
     
     ndim = a_samps.shape[1]
     axes = np.array(fig.axes).reshape((ndim, ndim))
@@ -398,11 +409,11 @@ def plot_dual_corner(galaxy_id, data1, label1, data2, label2, mock_data=None,
         # We use a newline \n to stack them. Note: 'y' controls the vertical height.
         # 4. Place individual text objects (Manually colored)
         # x=0.5 centers it. y=1.02 and 1.15 stack them above the plot.
-        ax.text(0.5, 1.15, a_str, color="orange", transform=ax.transAxes, 
-                fontsize=14, ha='center', va='bottom', fontweight='bold')
+        ax.text(0.5, 1.23, a_str, color="orange", transform=ax.transAxes, 
+                fontsize=22, ha='center', va='bottom', fontweight='bold')
         
-        ax.text(0.5, 1.02, b_str, color="dodgerblue", transform=ax.transAxes, 
-                fontsize=14, ha='center', va='bottom', fontweight='bold')
+        ax.text(0.5, 1.03, b_str, color="dodgerblue", transform=ax.transAxes, 
+                fontsize=22, ha='center', va='bottom', fontweight='bold')
         
         # 6. Coloring the text
         # To get specific colors for specific lines of the title, 
@@ -412,10 +423,12 @@ def plot_dual_corner(galaxy_id, data1, label1, data2, label2, mock_data=None,
     
     
     
-    fig.suptitle(f"{label1} vs. {label2}\nMock Galaxy {galaxy_id}", fontsize=24, y=1.0)
+    fig.suptitle(f"{label1} vs. {label2}\n{title} {galaxy_id}", fontsize=32, y=1.0, fontweight="bold")
     
-    fig_path = os.path.join(save_dir, f'{galaxy_id}_corner.png')
-    plt.savefig(fig_path, dpi=300, bbox_inches='tight')
+    if save_fig:
+        fig_path = os.path.join(save_dir, f'{galaxy_id}_corner.png')
+        plt.savefig(fig_path, dpi=300, bbox_inches='tight')
+        
     plt.show()
     plt.close()
     

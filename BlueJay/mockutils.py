@@ -95,3 +95,37 @@ def write_alma_transmission_curves(file_path, central_freq_ghz, bandwidth_ghz):
         comments=''
     )
     print(f"💾 Saved tophat filter to: {file_path}")
+    
+
+def extract_true_params(model_components):
+    # 1. Identify which SFH component is active (the one that isn't nebular, redshift, or dust)
+    sfh_types = ["constant", "exponential", "lognormal", "dblplaw"]
+    active_sfh_key = next((key for key in model_components if key in sfh_types), None)
+    
+    # 2. Build the parameter dict
+    params = {
+        "redshift": model_components["redshift"],
+        "sfh_type": active_sfh_key,
+    }
+    
+    # 3. Dynamically add all SFH parameters (mass, metallicity, tau, etc.)
+    if active_sfh_key:
+        sfh_params = model_components[active_sfh_key]
+        for key, val in sfh_params.items():
+            # Log-transform metallicity if it's found
+            if key == 'metallicity':
+                params['logzsol'] = np.log10(val)
+            elif key == 'massformed':
+                params['logmass'] = val
+            else:
+                params[f"sfh_{key}"] = val
+    
+    # 4. Dynamically add all Dust parameters
+    for key, val in model_components['dust'].items():
+        params[f"dust_{key}"] = val
+        
+    # 5. Dynamically add all Nebular parameters
+    for key, val in model_components['nebular'].items():
+        params[f"gas_{key}"] = val
+        
+    return params

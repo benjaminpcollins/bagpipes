@@ -61,3 +61,37 @@ def zred_to_agebins(zred, z_limit_sfh=20.0, nbins_sfh=8):
     bin_edges = 10**log_edges   # Convert back to linear space
     bin_edges /= 1e6 # ensure that edges are in Myr for Bagpipes
     return bin_edges.tolist()   # return list of age bin edges
+
+def write_alma_transmission_curves(file_path, central_freq_ghz, bandwidth_ghz):
+    c_m_per_s = 299792458   # Speed of light in m/s
+    
+    # Calculate frequency edges (Hz)
+    nu_min = (central_freq_ghz - (bandwidth_ghz / 2.0)) * 1e9
+    nu_max = (central_freq_ghz + (bandwidth_ghz / 2.0)) * 1e9
+    
+    # Convert to Wavelength edges (Angstroms)
+    wave_start = (c_m_per_s / nu_max) * 1e10
+    wave_end = (c_m_per_s / nu_min) * 1e10
+    
+    # Create a 4-point perfect rectangle
+    # We add a tiny buffer (e.g., 0.1 Angstrom) to make the filter walls perfectly vertical
+    wavelengths = np.array([
+        wave_start - 0.1,  # Just outside the left wall
+        wave_start,        # Just inside the left wall
+        wave_end,          # Just inside the right wall
+        wave_end + 0.1     # Just outside the right wall
+    ])
+    
+    # Assign transmission values (We do 1.0 since ALMA bands are very narrow)
+    transmissions = np.array([0.0, 1.0, 1.0, 0.0])
+    
+    # Generate a two-column text file for Bagpipes
+    output_data = np.column_stack((wavelengths, transmissions))
+    
+    np.savetxt(
+        file_path, 
+        output_data, 
+        fmt=['%.4f', '%.1f'], 
+        comments=''
+    )
+    print(f"💾 Saved tophat filter to: {file_path}")

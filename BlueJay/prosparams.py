@@ -3,8 +3,8 @@ New modified model to work with new photometry on the cluster
 Version that fits ONLY THE PHOTOMETRY!  NEW uses MIRI photometry
 """
 
+import os
 import numpy as np
-
 from astropy.cosmology import WMAP9 as cosmo
 from astropy.io import fits
 import astropy.units as u
@@ -44,49 +44,21 @@ def build_obs(objid, **extras):
     with open("filters/full_miri+alma67_filt_list.txt", "r") as f:
         raw_filter_paths = [line.strip() for line in f if line.strip()]
 
-    # Map file paths to Prospector's sedpy database names
-    filter_mapping = {
-        'filters/f090w': 'jwst_f090w',
-        'filters/f115w': 'jwst_f115w',
-        'filters/f125w': 'wfc3_ir_f125w',
-        'filters/f140w': 'wfc3_ir_f140w',
-        'filters/f150w': 'jwst_f150w',
-        'filters/f160w': 'wfc3_ir_f160w',
-        'filters/f200w': 'jwst_f200w',
-        'filters/f277w': 'jwst_f277w',
-        'filters/f356w': 'jwst_f356w',
-        'filters/f410m': 'jwst_f410m',
-        'filters/f444w': 'jwst_f444w',
-        'filters/f606w': 'acs_wfc_f606w',
-        'filters/f814w': 'acs_wfc_f814w',
-        'filters/f560w': 'jwst_f560w',
-        'filters/f770w': 'jwst_f770w',
-        'filters/f1000w': 'jwst_f1000w',
-        'filters/f1130w': 'jwst_f1130w',
-        'filters/f1280w': 'jwst_f1280w',
-        'filters/f1500w': 'jwst_f1500w',
-        'filters/f1800w': 'jwst_f1800w',
-        'filters/f2100w': 'jwst_f2100w',
-        'filters/f2550w': 'jwst_f2550w',
-        # Added custom ALMA bands 6 and 7
-        'filters/alma_band6': 'alma_band6',
-        'filters/alma_band7': 'alma_band7'
-    }
-
     # Generate the proper Filter instances manually
     loaded_filters = []
     for path in raw_filter_paths:
-        mapped_name = filter_mapping[path]
+        # Get filter name
+        filter_name = os.path.basename(path)
         
         if 'alma' in path:
             # For custom top-hat text files: load directly using sedpy.observate.Filter
             custom_filt = sedpy.observate.Filter(filename=path)
-            custom_filt.name = mapped_name # Give it your designated nick-name
+            custom_filt.name = filter_name # Give it your designated nick-name
             loaded_filters.append(custom_filt)
         else:
             # For native database filters: load via sedpy standard library
             # load_filters always returns a list, so we grab the first element [0]
-            native_filt = sedpy.observate.load_filters([mapped_name])[0]
+            native_filt = sedpy.observate.load_filters([filter_name])[0]
             loaded_filters.append(native_filt)
 
     # Create the obs dictionary and load filters
@@ -446,11 +418,11 @@ if __name__=='__main__':
                         help="If set, add agn emission to the model.")
     parser.add_argument('--fit_afe', action="store_true", default=False,
                         help="If set, use afe as a free parameter to fit.")
+    parser.add_argument('--filt_list', type=str, default="filters/all_filters.txt",
+                        help="Path to the filter list file.")
 
     args = parser.parse_args()
     run_params = vars(args)
-
-    run_params["zred"] = 2.50
 
     run_params["param_file"] = __file__
     run_params["outfile"] = ""

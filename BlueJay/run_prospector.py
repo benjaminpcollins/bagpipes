@@ -25,20 +25,22 @@ import astropy.table as Table
 def get_zred(galaxy_id):    
     # --- Read Blue Jay catalogue ---
     blue = "/Users/benjamincollins/University/Master/BlueJay/BlueJay_sample.txt"
-    tbl = Table.read(blue, format="ascii.basic")
-    
-    row = tbl[tbl['id'] == int(galaxy_id)]
+    df = pd.read_csv(blue, sep='\s+')  # '\s+' handles whitespace-separated files
+
+    # Faster lookup
+    row = df.loc[df['id'] == int(galaxy_id)]
+    z_spec = row['z_spec'].values[0]
     
     # Make sure that the code doesn't crash if it can't find the ID in the catalogue
     if len(row) == 0:   
         return None, False
     
-    z_spec = row['z_spec'][0]
+    z_spec = row['z_spec'].values[0]
     
     if z_spec is not None and not np.isnan(z_spec):
         return z_spec, True
     else:
-        z_phot = row['z_phot'][0]
+        z_phot = row['z_phot'].values[0]
         return z_phot, False
 
 def flambda_to_maggies(wave_AA, flux):
@@ -64,23 +66,33 @@ def build_obs(objid, filt_list, mock_fit=False, fit_true_phot=False, **extras):
     # Generate the proper Filter instances manually
     filter_names = []
     loaded_filters = []
-    phot_waves = []
     
     for path in raw_filter_paths:
         # Get filter name
         filter_name = os.path.basename(path)
         filter_names.append(filter_name)
         
-        if 'alma' in path:
+        if 'alma_band6' in path:
             # For custom top-hat text files: load directly using sedpy.observate.Filter
             custom_filt = sedpy.observate.Filter(filename=path)
             custom_filt.name = filter_name # Give it your designated nick-name
             loaded_filters.append(custom_filt)
+            
+        elif 'alma_band7' in path:
+            # For custom top-hat text files: load directly using sedpy.observate.Filter
+            custom_filt = sedpy.observate.Filter(filename=path)
+            custom_filt.name = filter_name # Give it your designated nick-name
+            loaded_filters.append(custom_filt)
+            
         else:
             # For native database filters: load via sedpy standard library
             # load_filters always returns a list, so we grab the first element [0]
             native_filt = sedpy.observate.load_filters([filter_name])[0]
             loaded_filters.append(native_filt)
+
+    # Create the obs dictionary and load filters
+    obs = {}    
+    obs['filters'] = loaded_filters
 
     if mock_fit:
         # Load the mock CSV we created earlier
@@ -100,13 +112,16 @@ def build_obs(objid, filt_list, mock_fit=False, fit_true_phot=False, **extras):
             flux_ujy = df['mock_flux'].values
             
         err_ujy = df['flux_err'].values
+        
+        obs['phot_wave'] = np.array([f.wave_effective for f in obs['filters']])
     
     else:
         flux_ujy = []
         err_ujy = []
+        phot_waves = []
         
-        for path in raw_filter_paths:
-            filter_name = os.path.basename(path)    # Leaves you with "filters/hst/acs_wfc_f606w"
+        for path, loaded in zip(raw_filter_paths, loaded_filters):
+            filter_name = os.path.basename(path)    # Leaves you with "acs_wfc_f606w"
             band = filter_name.split('_')[-1].upper()   # Leaves you with F606W
             
             # For HST and NIRCam look through the original Blue Jay table
@@ -124,6 +139,8 @@ def build_obs(objid, filt_list, mock_fit=False, fit_true_phot=False, **extras):
                 # Convert Jy to µJy
                 flux_ujy.append(flux_jy * 1e6)
                 err_ujy.append(err_jy * 1e6)
+                
+                phot_waves.append(loaded.wave_effective)
             
             elif 'miri' in path:
                 # Load MIRI photometry
@@ -139,6 +156,8 @@ def build_obs(objid, filt_list, mock_fit=False, fit_true_phot=False, **extras):
                 # Convert Jy to µJy
                 flux_ujy.append(flux_jy * 1e6)
                 err_ujy.append(err_jy * 1e6)
+                
+                phot_waves.append(loaded.wave_effective)
             
             elif 'alma' in path:
                 # Load ALMA data
@@ -154,14 +173,15 @@ def build_obs(objid, filt_list, mock_fit=False, fit_true_phot=False, **extras):
                 # Convert mJy to µJy
                 flux_ujy.append(flux_mjy * 1e3)
                 err_ujy.append(err_mjy * 1e3)
-            
+                
+                if 'band6' in path:
+                    phot_waves.append(1286.73999 * 1e4)    # Effective wavelength of ALMA band 6
+                elif 'band7' in path:
+                    phot_waves.append(872.663024 * 1e4)    # Effective wavelength of ALMA band 7
             else:
                 print(f"Warning: Unrecognized filter path '{path}'. Skipping this filter.")
 
-    # Create the obs dictionary and load filters
-    obs = {}
-    obs['filters'] = loaded_filters
-    obs['phot_wave'] = np.array([f.wave_effective for f in obs['filters']])
+        obs['phot_wave'] = np.array(phot_waves)
     
     for f, w in zip(obs['filters'], obs['phot_wave']):
         print(f"Filter: {f.name} | Effective Wavelength: {w/10000:.2f} µm")
@@ -179,8 +199,6 @@ def build_obs(objid, filt_list, mock_fit=False, fit_true_phot=False, **extras):
     obs['spectrum'] = None
     obs['unc'] = None
     obs['mask'] = None
-    
-    print('objid:', objid)
     
     return obs
 
@@ -539,7 +557,7 @@ if __name__=='__main__':
     run_params['nested_first_update'] = {'min_ncall': 10000, 'min_eff': 7.5}
 
 
-    print("\nFitting mock galaxy {}".format(run_params["objid"]))
+    print("\nFitting galaxy {}".format(run_params["objid"]))
     print("------------------\n")
 
     # build observations

@@ -5,6 +5,8 @@ Version that fits ONLY THE PHOTOMETRY!  NEW uses MIRI photometry
 
 import os
 import numpy as np
+import pandas as pd
+
 from astropy.cosmology import WMAP9 as cosmo
 from astropy.io import fits
 import astropy.units as u
@@ -18,11 +20,26 @@ from prospect.models.sedmodel import PolySpecModel
 from prospect.models import priors
 from prospect.models.templates import TemplateLibrary
 
+import astropy.table as Table
 
-
-def find_zred(objid):
-    dat_zred = np.loadtxt('../redshifts_2.0.txt', dtype=[('ID', int),('z', '<f8')])
-    return abs(dat_zred['z'][dat_zred['ID']==int(objid)][0])
+def get_zred(galaxy_id):    
+    # --- Read Blue Jay catalogue ---
+    blue = "/Users/benjamincollins/University/Master/BlueJay/BlueJay_sample.txt"
+    tbl = Table.read(blue, format="ascii.basic")
+    
+    row = tbl[tbl['id'] == int(galaxy_id)]
+    
+    # Make sure that the code doesn't crash if it can't find the ID in the catalogue
+    if len(row) == 0:   
+        return None, False
+    
+    z_spec = row['z_spec'][0]
+    
+    if z_spec is not None and not np.isnan(z_spec):
+        return z_spec, True
+    else:
+        z_phot = row['z_phot'][0]
+        return z_phot, False
 
 def flambda_to_maggies(wave_AA, flux):
 
@@ -35,20 +52,22 @@ def flambda_to_maggies(wave_AA, flux):
 
 
 
-def build_obs(objid, **extras):
+def build_obs(objid, filt_list, mock_fit=False, fit_true_phot=False, **extras):
     """
     Modified to read the exact filter ordering from your BlueJay text file
     """
     # Read the filter paths directly from the text file
     # This automatically strips out newlines and keeps the exact order
-    with open("filters/full_miri+alma67_filt_list.txt", "r") as f:
+    with open(filt_list, "r") as f:
         raw_filter_paths = [line.strip() for line in f if line.strip()]
 
     # Generate the proper Filter instances manually
+    filter_names = []
     loaded_filters = []
     for path in raw_filter_paths:
         # Get filter name
         filter_name = os.path.basename(path)
+        filter_names.append(filter_name)
         
         if 'alma' in path:
             # For custom top-hat text files: load directly using sedpy.observate.Filter
@@ -61,19 +80,93 @@ def build_obs(objid, **extras):
             native_filt = sedpy.observate.load_filters([filter_name])[0]
             loaded_filters.append(native_filt)
 
+    if mock_fit:
+        # Load the mock CSV we created earlier
+        path = f"/Users/benjamincollins/University/PhD/Code/bagpipes/BlueJay/data/mocks/{objid}_mock_phot.csv"
+        df = pd.read_csv(path)
+            
+        # Reorder the DataFrame to match the filt_list order exactly
+        df = df.set_index('filter_name').reindex(filter_names)
+        
+        # If user provided a specific list of bands, filter the data
+        if fit_true_phot:
+            # Use the true photometry (true_flux) for fitting
+            flux_ujy = df['true_flux'].values
+            print("⚠️ Using true photometry for fitting.")
+        else:
+            # Use mock photometry for fitting (default)
+            flux_ujy = df['mock_flux'].values
+            
+        err_ujy = df['flux_err'].values
+    
+    else:
+        flux_ujy = []
+        err_ujy = []
+        
+        for path in raw_filter_paths:
+            filter_name = os.path.basename(path)    # Leaves you with "filters/hst/acs_wfc_f606w"
+            band = filter_name.split('_')[-1].upper()   # Leaves you with F606W
+            
+            # For HST and NIRCam look through the original Blue Jay table
+            if 'hst' in path or 'nircam' in path:
+                # Load HST/ACS and NIRCam photometry
+                bluejay = Table.read("data/catalogues/bluejay_phot_cat_v1.4.fits")
+
+                # Filter the catalogue to get the row corresponding to the galaxy ID
+                row = bluejay[bluejay['id'] == int(objid)]
+                
+                # Access the flux and error for the specific band from the filtered row
+                flux_jy = row[f'{band}_flux'][0]
+                err_jy = row[f'{band}_flux_err'][0]
+                
+                # Convert Jy to µJy
+                flux_ujy.append(flux_jy * 1e6)
+                err_ujy.append(err_jy * 1e6)
+            
+            elif 'miri' in path:
+                # Load MIRI photometry
+                miri = Table.read("data/catalogues/Phot_Table_MIRI.fits")
+
+                # Filter the catalogue to get the row corresponding to the galaxy ID
+                row = miri[miri['id'] == int(objid)]
+                
+                # Access the flux and error for the specific band from the filtered row
+                flux_jy = row[f'{band}_flux'][0]
+                err_jy = row[f'{band}_flux_err'][0]
+                
+                # Convert Jy to µJy
+                flux_ujy.append(flux_jy * 1e6)
+                err_ujy.append(err_jy * 1e6)
+            
+            elif 'alma' in path:
+                # Load ALMA data
+                alma = Table.read("data/catalogues/ALMA_BlueJay.fits")
+
+                # Filter the catalogue to get the row corresponding to the galaxy ID
+                row = alma[alma['id'] == int(objid)]
+                
+                # Access the flux and error for the specific band from the filtered row
+                flux_mjy = row['flux'][0]
+                err_mjy = row['flux_err_sim'][0]
+                
+                # Convert mJy to µJy
+                flux_ujy.append(flux_mjy * 1e3)
+                err_ujy.append(err_mjy * 1e3)
+            
+            else:
+                print(f"Warning: Unrecognized filter path '{path}'. Skipping this filter.")
+
     # Create the obs dictionary and load filters
     obs = {}
     obs['filters'] = loaded_filters
     obs['phot_wave'] = np.array([f.wave_effective for f in obs['filters']])
     
-    # Load the mock file
-    mock_data = np.load(f"comparison/mock_fit/{objid}_mock.npz")
-    mock_flux_ujy = mock_data['flux']
-    flux_err_ujy = mock_data['flux_err']
+    for f, w in zip(obs['filters'], obs['phot_wave']):
+        print(f"Filter: {f.name} | Effective Wavelength: {w/10000:.2f} µm")
     
     # Convert microjanskys to maggies
-    obs['maggies'] = np.array(mock_flux_ujy) * 1e-6 / 3631
-    obs['maggies_unc'] = np.array(flux_err_ujy) * 1e-6 / 3631
+    obs['maggies'] = np.array(flux_ujy) * 1e-6 / 3631
+    obs['maggies_unc'] = np.array(err_ujy) * 1e-6 / 3631
     
     # Enable all 17 photometry points for the fit
     obs['phot_mask'] = np.ones(len(loaded_filters), dtype='bool')
@@ -125,8 +218,7 @@ def logmass_to_masses(logmass=None, logsfr_ratios=None, zred=None, **extras):
 
 
 def build_model(objid, zred=None, waverange=None, add_duste=True,
-                add_agn=False, add_neb = True, fit_afe=False,
-                has_z = True,**extras):
+                add_agn=False, add_neb = True, fit_afe=False,**extras):
     """Build a prospect.models.SedModel object
 
     :param zred: (optional, default: None)
@@ -143,17 +235,18 @@ def build_model(objid, zred=None, waverange=None, add_duste=True,
 
     model_params = {}
     
-    if has_z:
+    zred, has_spec_z = get_zred(objid)
+    
+    # If a spectroscopic redshift exists, fix it
+    if has_spec_z:
+        model_params['zred'] = {"N": 1, "isfree": False,
+                                "init": zred,
+                                "units": "redshift"}
+    else:   # Otherwise, leave it as a free parameter with a Gaussian prior on the photometric value
         model_params['zred'] = {"N": 1, "isfree": True,
                                 "init": zred,
                                 "units": "redshift",
-                                "prior": priors.Normal(mean=zred, sigma=0.005)}
-    else:
-        model_params["zred"] = {"N": 1,
-                "isfree": True,
-                "init": 2.0,
-                "units": "redshift",
-                "prior": priors.TopHat(mini = 0.0, maxi=10)}
+                                "prior": priors.Normal(mean=zred, sigma=0.05)}
         
     model_params['logzsol'] = {"N": 1, "isfree": True,
                                "init": -0.5,
@@ -406,8 +499,6 @@ if __name__=='__main__':
     # - Add custom arguments -
     parser.add_argument('--objid', type=int, default=0000,
                         help="ID of the object to fit")
-    parser.add_argument('--zred', type=float, default=2.50,
-                        help="fixed redshift value") 
     parser.add_argument('--output_tag', type=str, default="mock_test",
                         help="output tag name")          
     parser.add_argument('--add_duste', action="store_true", default=True,
@@ -420,6 +511,9 @@ if __name__=='__main__':
                         help="If set, use afe as a free parameter to fit.")
     parser.add_argument('--filt_list', type=str, default="filters/all_filters.txt",
                         help="Path to the filter list file.")
+    parser.add_argument('--fit_true_phot', action="store_true", default=False,
+                        help="If set, use true photometry for fitting.")
+    
 
     args = parser.parse_args()
     run_params = vars(args)

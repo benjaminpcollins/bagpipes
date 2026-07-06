@@ -64,6 +64,8 @@ def build_obs(objid, filt_list, mock_fit=False, fit_true_phot=False, **extras):
     # Generate the proper Filter instances manually
     filter_names = []
     loaded_filters = []
+    phot_waves = []
+    
     for path in raw_filter_paths:
         # Get filter name
         filter_name = os.path.basename(path)
@@ -110,7 +112,7 @@ def build_obs(objid, filt_list, mock_fit=False, fit_true_phot=False, **extras):
             # For HST and NIRCam look through the original Blue Jay table
             if 'hst' in path or 'nircam' in path:
                 # Load HST/ACS and NIRCam photometry
-                bluejay = Table.read("data/catalogues/bluejay_phot_cat_v1.4.fits")
+                bluejay = fits.open("data/catalogues/bluejay_phot_cat_v1.4.fits")[1].data
 
                 # Filter the catalogue to get the row corresponding to the galaxy ID
                 row = bluejay[bluejay['id'] == int(objid)]
@@ -125,7 +127,7 @@ def build_obs(objid, filt_list, mock_fit=False, fit_true_phot=False, **extras):
             
             elif 'miri' in path:
                 # Load MIRI photometry
-                miri = Table.read("data/catalogues/Phot_Table_MIRI.fits")
+                miri = fits.open("data/catalogues/Phot_Table_MIRI.fits")[1].data
 
                 # Filter the catalogue to get the row corresponding to the galaxy ID
                 row = miri[miri['id'] == int(objid)]
@@ -140,7 +142,7 @@ def build_obs(objid, filt_list, mock_fit=False, fit_true_phot=False, **extras):
             
             elif 'alma' in path:
                 # Load ALMA data
-                alma = Table.read("data/catalogues/ALMA_BlueJay.fits")
+                alma = fits.open("data/catalogues/ALMA_BlueJay.fits")[1].data
 
                 # Filter the catalogue to get the row corresponding to the galaxy ID
                 row = alma[alma['id'] == int(objid)]
@@ -545,6 +547,9 @@ if __name__=='__main__':
     #np.save('obs/obs_'+str(run_params["objid"]), obs)
     #print('obs saved')
 
+    zred, is_spec = get_zred(run_params['objid'])
+    run_params['zred'] = zred
+    
     # build sps
     sps = build_sps(zred=run_params['zred'], smooth_instrument=False, obs=obs)
     

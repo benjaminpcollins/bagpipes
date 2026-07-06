@@ -523,14 +523,16 @@ if __name__=='__main__':
     
     # add in dynesty settings
     run_params['dynesty'] = True
-    run_params['nested_target_n_effective'] = 500
-    run_params['nested_nlive_batch'] = 500
-    run_params['nested_walks'] = 25  
-    run_params['nested_nlive_init'] =  1500
-    run_params['nested_dlogz_init'] = 0.01
-    run_params['nested_maxcall'] = 5000000
-    run_params['nested_maxcall_init'] = 5000000
-    run_params['nested_sample'] = 'rwalk' # make sure *nested_sample* is specified rather than nested_method.
+    # Dynesty settings optimised for serial M1 MacBook performance
+    run_params['dynesty'] = True
+    run_params['nested_nlive_init'] = 1000          # Robust start, easier on RAM
+    run_params['nested_nlive_batch'] = 500          # Good balance for batch updates
+    run_params['nested_walks'] = 20                 # Reduced from 25 to lower CPU pressure
+    run_params['nested_target_n_effective'] = 500   # Sufficient for high-quality posteriors
+    run_params['nested_dlogz_init'] = 0.05          # Faster convergence; 0.01 is often overkill
+    run_params['nested_maxcall'] = 2000000          # 5M is excessive for SEDs; 2M is plenty
+    run_params['nested_maxcall_init'] = 2000000
+    run_params['nested_sample'] = 'rwalk'           # Keep as rwalk for Prospector
     run_params['nested_maxbatch'] = None
     run_params['nested_first_update'] = {'min_ncall': 10000, 'min_eff': 7.5}
 
@@ -565,15 +567,19 @@ if __name__=='__main__':
     output = prospect.fitting.fit_model(obs, model, sps, noise, lnprobfn=lnprobfn_fixed, **run_params)
 
     # Get unique name for the output file
-    hfile = "{0}_{1}_{2}_mcmc.h5".format(
+    #hfile = "{0}_{1}_{2}_mcmc.h5".format(
+    hfile = "{0}_{1}_mcmc.h5".format(
         run_params["objid"], 
-        run_params["output_tag"],
-        int(time.time())
+        run_params["output_tag"]#,
+        #int(time.time())
     )
 
     # Write results to file
     # Note: Make sure a directory called 'output/' exists in your working directory!
-    out_name = 'comparison/prospector/output/' + hfile
+    out_dir = f'comparison/{run_params["output_tag"]}/output/'
+    os.makedirs(out_dir, exist_ok=True)
+    out_name = os.path.join(out_dir, hfile)
+    
     prospect.io.write_results.write_hdf5(out_name, run_params, model, obs,
                                          output["sampling"][0], output["optimization"][0],
                                          tsample=output["sampling"][1],

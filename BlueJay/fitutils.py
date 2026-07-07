@@ -648,13 +648,15 @@ def plot_photometry(ax, obs, factor=3631e6):
         'acs':     {'color': 'royalblue',   'marker': 'o', 'edgecolor': 'black', 'label': 'HST ACS', 'ms': 10},
         'nircam':  {'color': 'orange', 'marker': 'p', 'edgecolor': 'black',    'alpha': 0.7, 'label': 'JWST NIRCam', 'ms': 10},
         'miri':    {'color': 'firebrick',    'marker': 'p', 'edgecolor': 'black',    'alpha': 0.7, 'label': 'JWST MIRI (not used in fit)', 'ms': 10},
-        'alma':    {'color': 'limegreen',  'marker': 'd', 'edgecolor': 'black', 'label': 'ALMA', 'ms': 10},
+        'alma':    {'color': 'limegreen',  'marker': '*', 'edgecolor': 'black', 'label': 'ALMA', 'ms': 10},
     }
     
     # Get current labels to prevent duplicates
     _, labels = ax.get_legend_handles_labels()
     
-    for i, filt in enumerate(obs['filters']):
+    for i, name in enumerate(obs['filters']):
+        
+        print(name)
         
         wave = obs['phot_wave'][i] * 1e-4  # convert to µm
         flux = obs['maggies'][i] * factor  # µJy
@@ -662,16 +664,14 @@ def plot_photometry(ax, obs, factor=3631e6):
         
         uplims = False
         
-        name = filt.name.lower()
-        
         if 'acs_wfc' in name:
             style = instrument_styles['acs']
-        elif 'alma' in name:
-            style = instrument_styles['alma']
         elif 'miri' in name or any(m in name for m in ['f770w', 'f1000w', 'f1800w', 'f2100w']):
             style = instrument_styles['miri']
         elif 'nircam' in name or ('jwst' in name and 'f' in name and 'w' in name):
             style = instrument_styles['nircam']
+        elif 'alma' in name:
+            style = instrument_styles['alma']
         else:
             continue  # skip unknown filters
         
@@ -680,8 +680,6 @@ def plot_photometry(ax, obs, factor=3631e6):
             uplims = True
             flux = 3 * err # Plot at 3-sigma
             err = flux * 0.4 # Small arrow size for visualisation
-        
-
 
         ax.errorbar(
             wave, flux, yerr=err,
@@ -698,7 +696,6 @@ def plot_photometry(ax, obs, factor=3631e6):
         if style['label'] not in labels:
             labels.append(style['label'])
 
-
 def plot_fit_prospector(objid, file_path, fig_path, filt_list):
     
     try:
@@ -714,59 +711,30 @@ def plot_fit_prospector(objid, file_path, fig_path, filt_list):
     # Build the MAP dictionary
     MAP = {}
     for a,b in zip(results['theta_labels'], map_parameters):
-        MAP[a] = b
-    """
-    # 1. If loading custom files, use the 'directory' argument or explicit paths
-    # Do NOT use load_filters if they aren't in the sedpy internal library
-    with open(filt_list, "r") as f:
-        raw_filter_paths = [line.strip() for line in f if line.strip()]
-
-    # 2. If you are mixing built-in filters (names) and custom files (paths),
-    # build your list carefully:
-    all_filters = []
-    for filter_path in raw_filter_paths:        
-        if "alma" in filter_path:
-            continue
-            # Load from your local path
-            f_name = os.path.basename(filter_path)
-            alma_band = Filter(filter_path)
-            alma_band.name = f_name # Give it your designated nick-name
-            all_filters.append(alma_band) 
-            
-        else:
-            # Load from sedpy internal library
-            f_name = [os.path.basename(filter_path)]
-            print(f_name)
-            all_filters.append(load_filters(f_name))
+        MAP[a] = b  
     
-    obs['filters'] = all_filters
-    """
-    
-    
+    backup_obs = obs.copy()    # save this for the plot_photometry function
     
     # After loading your obs, remove ALMA bands
     obs['filters'] = [f for f in obs['filters'] if 'alma' not in f]
     
-    for f in obs['filters']:
-        print(f"Filter object type: {type(f)} | Name: {f}")
+    #for f in obs['filters']:
+    #    print(f"Filter object type: {type(f)} | Name: {f}")
 
     obs['filters'] = load_filters(obs['filters'])
     
-    for f in obs['filters']:
-        print(f"Filter object type: {type(f)} | Name: {getattr(f, 'name', 'N/A')}")
+    #for f in obs['filters']:
+    #    print(f"Filter object type: {type(f)} | Name: {getattr(f, 'name', 'N/A')}")
 
     # You must also mask the corresponding flux/uncertainty indices
     # so Prospector doesn't try to plot flux that doesn't exist
     obs['phot_mask'] = obs['phot_mask'][:-1]
     
-    print(len(obs['filters']), len(obs['phot_mask']))
-    
-    
+    #print(len(obs['filters']), len(obs['phot_mask']))
     
     zred, _ = get_zred(objid)
     logmass = MAP['logmass']
     dust2 = MAP['dust2']    # extract the diffuse dust V-band optical depth
-    
     
     # Calculate the spectrum based on the Maximum A Posteriori (MAP) parameters
     sps = FastStepBasis(zcontinuous=1)
@@ -808,6 +776,7 @@ def plot_fit_prospector(objid, file_path, fig_path, filt_list):
     upper_scaled = spec_84th * maggies_to_muJy
     spec_scaled = spec * maggies_to_muJy
     
+    phot_wave = phot_wave[obs['phot_mask']]
     phot_wave_microns = phot_wave * 1e-4  # convert to µm
     
     phot = phot[obs['phot_mask']]   # Only plot model photometry for the observed bands
@@ -817,12 +786,11 @@ def plot_fit_prospector(objid, file_path, fig_path, filt_list):
     
     print("Rescaled data...")
 
-    
     # Initialise the plot
     fig, ax = plt.subplots(figsize=(8, 5))
     
     # Plot shaded region for 1σ uncertainty
-    ax.fill_between(wave_spec_rs, lower_scaled, upper_scaled, color='crimson', alpha=0.2, label='1σ uncertainty')
+    ax.fill_between(wave_spec_rs, lower_scaled, upper_scaled, color='crimson', alpha=0.2, label=r'1$\sigma$ uncertainty')
     
     for spec in sample_specs:
         ax.plot(wave_spec_rs, spec*maggies_to_muJy, color='crimson', alpha=0.15, lw=0.8)
@@ -843,27 +811,26 @@ def plot_fit_prospector(objid, file_path, fig_path, filt_list):
     print("Added model photometry...")
     
     #########  PLOT MEASURED PHOTOMETRY    #########
-
-    plot_photometry(ax, obs)
+        
+    plot_photometry(ax, backup_obs)
     
     print("Added observed photometry...")
     
     # Compute bounds
-    wave_mask = (wave_spec_rs >= 0.4) & (wave_spec_rs <= 35)
+    wave_mask = (wave_spec_rs >= 0.4) & (wave_spec_rs <= 1300)
     
     # Apply mask to spectrum(s)
     spec_within = spec_scaled[wave_mask]  # works for 1D or 2D (e.g. percentiles)
-    spec_within = [ele for ele in spec_within if ele > 0]
-
+    valid_spec = spec_within[spec_within > 1e-10] # Use a tiny epsilon instead of 0
     print("Masked spectrum...")
     
     # Compute y-axis limits
-    ymin = np.nanmin(spec_within)
-    ymax = np.nanmax(spec_within)
-    
+    ymin = np.nanmin(valid_spec)
+    ymax = np.nanmax(valid_spec)
+        
     # Add margin proportionally, protecting against log-scale issues
     ymin_plot = ymin * 0.2  # reduce, but stay > 0
-    ymax_plot = ymax * 5   # increase
+    ymax_plot = ymax * 5    # increase
 
     # Set limits
     ax.set_ylim(ymin_plot, ymax_plot)
@@ -871,17 +838,21 @@ def plot_fit_prospector(objid, file_path, fig_path, filt_list):
     # Plot formatting
     ax.set_xlabel('Observed Wavelength [µm]', fontsize=13)
     ax.set_ylabel('Flux [µJy]', fontsize=13)
-    ax.set_xlim(0.4, 35)#200)    # Change x range    
+    ax.set_xlim(0.4, 10000)    # Change x range    
     ax.set_xscale('log')
     ax.set_yscale('log')
+    
+    ax.legend()
     
     #ax.set_title(f"Galaxy {objid} at z={np.round(zred,2)}", fontsize=14)
 
     ax.tick_params(axis='both', which='major', labelsize=13)
     
     plt.title(f"Galaxy {objid} with ALMA (z={np.round(zred,2)})", fontsize=14)
-    plt.tight_layout()
-    
+    try:
+        plt.tight_layout()
+    except Exception as e:
+        print(f"tight_layout failed: {e}. Skipping...")
     plt.savefig(fig_path, dpi=300, bbox_inches='tight')
     print(f"Plot saved to {fig_path}")
     plt.show()

@@ -6,8 +6,18 @@ import pandas as pd
 import prospect.io.read_results as reader
 from prospect.models.transforms import logsfr_ratios_to_sfrs
 from prospect.utils.plotting import get_percentiles, get_best
+from astropy.cosmology import WMAP9 as cosmo
+from prospect.models.transforms import logsfr_ratios_to_sfrs
+from prospect.sources import FastStepBasis
+from prospect.utils.plotting import posterior_samples
+from astropy.cosmology import Planck18 as cosmo
+from prospect.models.sedmodel import PolySpecModel, SpecModel
+from sedpy.observate import load_filters, list_available_filters, Filter
+
 from corner import quantile
 import h5py
+
+from mockutils import get_zred
 
 import corner
 import matplotlib.lines as mlines
@@ -32,7 +42,7 @@ from astropy.table import Table
 from sedpy import observate
 
 from scipy.stats import gaussian_kde
-from scipy.signal import find_peaks
+#from scipy.signal import find_peaks
 
 
 # Redshift
@@ -204,16 +214,11 @@ def load_bagpipes_results(galaxy_id, bagp_dir):
     return data
 
 
-def plot_dual_corner(galaxy_id, data1, label1, data2, label2, title=f"Galaxy", mock_data=None, 
-                     save_dir="/Users/benjamincollins/University/PhD/Code/bagpipes/BlueJay/comparison/mock_fit", 
-                     scale_dust1=False, scale_dust2=True,
-                     colour1="orange", colour2="dodgerblue",
-                     save_fig=True):
+def plot_dual_corner(data1, label1, data2, label2, title="Galaxy", mock_data=None, 
+                     colour1="orange", colour2="dodgerblue", fig_path=None):
     """Figure to plot corner plot of two posterior distributions, given that they are stored in the same format.
 
     Args:
-        galaxy_id (int) 
-            ID of the galaxy
         data1 (dict): 
             Output data of the first fit
         label1 (str): 
@@ -224,16 +229,12 @@ def plot_dual_corner(galaxy_id, data1, label1, data2, label2, title=f"Galaxy", m
             String describing the second fit
         mock_data (dict): 
             Dictionary containing the real galaxy properties in case of mock fit, otherwise None
-        save_dir (str): 
-            Output directory for the figure
-        scale_dust1 (bool):
-            Rescale dust2 parameter from optical thickness to Av (Only needed for Prospector)
-        scale_dust2 (bool):
-            Rescale dust2 parameter from optical thickness to Av (Only needed for Prospector)
         colour1 (str):
             Colour for first dataset (default: orange)
         colour2 (str):
             Colour for second dataset (default: dodgerblue)
+        fig_path (str): 
+            Output path for the figure
     
     """
     # Define internal keys and display labels
@@ -357,13 +358,6 @@ def plot_dual_corner(galaxy_id, data1, label1, data2, label2, title=f"Galaxy", m
         b_p = data2['params'][plot_keys[i]]
         b_val, b_plus, b_minus = b_p['q50'], b_p['q84'] - b_p['q50'], b_p['q50'] - b_p['q16']
         
-        # Special Case: If it's Av (index 2), apply the 1.086 scale to the text labels too
-        if i == 2:
-            if scale_dust1:
-                a_val, a_plus, a_minus = a_val*1.086, a_plus*1.086, a_minus*1.086
-            if scale_dust2:
-                b_val, b_plus, b_minus = b_val*1.086, b_plus*1.086, b_minus*1.086
-        
         # 4. Create the strings
         # Use \text{} or raw strings to handle the LaTeX formatting
         a_str = f"${a_val:.2f}^{{+{a_plus:.2f}}}_{{-{a_minus:.2f}}}$"
@@ -373,10 +367,10 @@ def plot_dual_corner(galaxy_id, data1, label1, data2, label2, title=f"Galaxy", m
         # We use a newline \n to stack them. Note: 'y' controls the vertical height.
         # 4. Place individual text objects (Manually colored)
         # x=0.5 centers it. y=1.02 and 1.15 stack them above the plot.
-        ax.text(0.5, 1.23, a_str, color="orange", transform=ax.transAxes, 
+        ax.text(0.5, 1.23, a_str, color=colour1, transform=ax.transAxes, 
                 fontsize=22, ha='center', va='bottom', fontweight='bold')
         
-        ax.text(0.5, 1.03, b_str, color="dodgerblue", transform=ax.transAxes, 
+        ax.text(0.5, 1.03, b_str, color=colour2, transform=ax.transAxes, 
                 fontsize=22, ha='center', va='bottom', fontweight='bold')
         
         # 6. Coloring the text
@@ -389,8 +383,7 @@ def plot_dual_corner(galaxy_id, data1, label1, data2, label2, title=f"Galaxy", m
     
     fig.suptitle(title, fontsize=32, y=1.0, fontweight="bold")
     
-    if save_fig:
-        fig_path = os.path.join(save_dir, f'{galaxy_id}_corner.png')
+    if fig_path:
         plt.savefig(fig_path, dpi=300, bbox_inches='tight')
         
     plt.show()
@@ -399,7 +392,7 @@ def plot_dual_corner(galaxy_id, data1, label1, data2, label2, title=f"Galaxy", m
     
     
     
-def plot_sfh_prospector(h5_file, figname=None):
+def plot_sfh_prospector(h5_file, fig_path=None):
     # Load PROSPECTOR results
     results, obs, model = reader.results_from(h5_file)
 
@@ -412,7 +405,7 @@ def plot_sfh_prospector(h5_file, figname=None):
     for a,b in zip(results['theta_labels'], map_parameters):
         MAP[a] = b
 
-    zred = MAP['zred']
+    #zred = MAP['zred']
     logmass = MAP['logmass']
     agebins = results['model_params'][8]['init']    # 8 for agebins
 
@@ -454,7 +447,7 @@ def plot_sfh_prospector(h5_file, figname=None):
 
     bin_starts = bin_edges[:, 0]
 
-    fig, ax = plt.subplots(figsize=(10, 5))
+    fig, ax = plt.subplots(figsize=(8, 4))
 
     # Plot the Median SFH
     ax.step(bin_starts, sfh_median, where='post', color='black', lw=2, label='Median SFH')
@@ -472,8 +465,8 @@ def plot_sfh_prospector(h5_file, figname=None):
     ax.legend()
     #plt.grid(True, which="both", ls="-", alpha=0.2)
     plt.tight_layout()
-    if figname:
-        plt.savefig(f"/Users/benjamincollins/University/PhD/Code/bagpipes/BlueJay/pipes/plots/mock_fit/{figname}")
+    if fig_path:
+        plt.savefig(f"{fig_path}", dpi=300, bbox_inches='tight')
     plt.show()
     
     
@@ -560,3 +553,336 @@ def plot_corner(galaxy_id, data, color="Orange", title="Galaxy"):
     
     fig.suptitle(title, fontsize=16)
     plt.show()
+
+
+def load_bluejay(ID):
+    """ Load BlueJay photometry from the BlueJay catalogue(s)"""
+
+    # Blue Jay catalogue
+    bluejay_cat = Table.read("data/catalogues/bluejay_phot_cat_v1.4.fits")
+    
+    # 1. List all HST/ACS and NIRCam bands:
+    filters = ['F090W', 'F115W', 'F150W', 'F200W', 'F277W', 'F356W', 'F410M', 'F444W', 'F606W', 'F814W']
+    
+    # 2. Find the correct row using the ID column
+    # Use a mask rather than (int(ID) - 1) to be safe against non-sequential IDs
+    row = bluejay_cat[bluejay_cat['ID'] == int(ID)]
+
+    if len(row) == 0:
+        raise ValueError(f"ID {ID} not found in catalogue.")
+    
+    # 3. Extract fluxes and errors into lists
+    fluxes = []
+    flux_errs = []
+
+    for f in filters:
+        fluxes.append(row[f + "_flux"][0] * 1e6)
+        flux_errs.append(row[f + "_flux_err"][0] * 1e6)
+
+
+    # MIRI catalogue
+    miri_cat = Table.read("data/catalogues/Phot_Table_MIRI.fits")
+    
+    # 1. List all available MIRI bands:
+    miri_filters = ['F770W', 'F1000W', 'F1800W', 'F2100W']
+    
+    # 2. Find the correct row using the ID column
+    # Use a mask rather than (int(ID) - 1) to be safe against non-sequential IDs
+    row = miri_cat[miri_cat['ID'] == int(ID)]
+
+    if len(row) == 0:
+        raise ValueError(f"ID {ID} not found in catalogue.")
+    
+    # 3. Extract fluxes and errors into lists
+    for f in miri_filters:
+        fluxes.append(row[f + "_flux"][0] * 1e6)
+        flux_errs.append(row[f + "_flux_err"][0] * 1e6)
+    
+    # Now turn these into a 2D array [N_filters, 2]
+    # Bagpipes expects photometry[i, 0] = flux, photometry[i, 1] = error
+    photometry = np.c_[fluxes, flux_errs]
+    
+    # 5. Clean up missing data and enforce SNR limits
+    for i in range(len(photometry)):
+        # Blow up errors for missing data (NaN or 0 flux)
+        if (photometry[i, 0] <= 0.) or (np.isnan(photometry[i, 0])):
+            photometry[i, :] = [0., 9.9e99]
+            continue # Skip SNR check for bad data
+    
+    return photometry
+
+def get_MAP(res, verbose=False):
+    """
+    Get Maximum A Posteriori parameters
+    chains = results['chain']   # Shape: (n_samples, n_parameters)
+    log_probabilities = results['lnprobability']  # Shape: (n_samples,)
+    
+    # Find the index of the maximum log probability
+    max_prob_index = np.argmax(log_probabilities)
+    
+    # Get the MAP parameters
+    map_parameters = chains[max_prob_index]
+
+    if verbose:
+        print("MAP Parameters:", map_parameters)
+
+    return map_parameters
+    """
+    #Get the posterior sample with the highest posterior probability.
+    
+    imax = np.argmax(res['lnprobability'])
+    # there must be a more elegant way to deal with differnt shapes
+    try:
+        i, j = np.unravel_index(imax, res['lnprobability'].shape)
+        theta_best = res['chain'][i, j, :].copy()
+    except(ValueError):
+        theta_best = res['chain'][imax, :].copy()
+    return theta_best
+
+
+def plot_photometry(ax, obs, factor=3631e6):
+    """Plot the photometry data on the provided axis."""
+    
+    # Define the style per instrument
+    instrument_styles = {
+        'acs':     {'color': 'royalblue',   'marker': 'o', 'edgecolor': 'black', 'label': 'HST ACS', 'ms': 10},
+        'nircam':  {'color': 'orange', 'marker': 'p', 'edgecolor': 'black',    'alpha': 0.7, 'label': 'JWST NIRCam', 'ms': 10},
+        'miri':    {'color': 'firebrick',    'marker': 'p', 'edgecolor': 'black',    'alpha': 0.7, 'label': 'JWST MIRI (not used in fit)', 'ms': 10},
+        'alma':    {'color': 'limegreen',  'marker': 'd', 'edgecolor': 'black', 'label': 'ALMA', 'ms': 10},
+    }
+    
+    # Get current labels to prevent duplicates
+    _, labels = ax.get_legend_handles_labels()
+    
+    for i, filt in enumerate(obs['filters']):
+        
+        wave = obs['phot_wave'][i] * 1e-4  # convert to µm
+        flux = obs['maggies'][i] * factor  # µJy
+        err  = obs['maggies_unc'][i] * factor  # µJy
+        
+        uplims = False
+        
+        name = filt.name.lower()
+        
+        if 'acs_wfc' in name:
+            style = instrument_styles['acs']
+        elif 'alma' in name:
+            style = instrument_styles['alma']
+        elif 'miri' in name or any(m in name for m in ['f770w', 'f1000w', 'f1800w', 'f2100w']):
+            style = instrument_styles['miri']
+        elif 'nircam' in name or ('jwst' in name and 'f' in name and 'w' in name):
+            style = instrument_styles['nircam']
+        else:
+            continue  # skip unknown filters
+        
+        # Improved Upper Limit Logic for MIRI
+        if (flux / err < 3.0):
+            uplims = True
+            flux = 3 * err # Plot at 3-sigma
+            err = flux * 0.4 # Small arrow size for visualisation
+        
+
+
+        ax.errorbar(
+            wave, flux, yerr=err,
+            fmt=style['marker'],
+            color=style['color'],
+            markeredgecolor=style.get('edgecolor', 'none'),
+            alpha=style.get('alpha', 1.0),
+            markersize=10,
+            uplims=uplims, # This creates the actual downward arrow
+            label=style['label'] if style['label'] not in labels else None
+        )
+        
+        # Update labels list to prevent duplicates in current loop
+        if style['label'] not in labels:
+            labels.append(style['label'])
+
+
+def plot_fit_prospector(objid, file_path, fig_path, filt_list):
+    
+    try:
+        results, obs, model = reader.results_from(file_path)
+        
+    except FileNotFoundError:
+        print(f"File {os.path.basename(file_path)} results found.")
+        return
+        
+    # Now we have to exclude the last 3 parameters from the fit
+    map_parameters = get_MAP(results)
+    
+    # Build the MAP dictionary
+    MAP = {}
+    for a,b in zip(results['theta_labels'], map_parameters):
+        MAP[a] = b
+    """
+    # 1. If loading custom files, use the 'directory' argument or explicit paths
+    # Do NOT use load_filters if they aren't in the sedpy internal library
+    with open(filt_list, "r") as f:
+        raw_filter_paths = [line.strip() for line in f if line.strip()]
+
+    # 2. If you are mixing built-in filters (names) and custom files (paths),
+    # build your list carefully:
+    all_filters = []
+    for filter_path in raw_filter_paths:        
+        if "alma" in filter_path:
+            continue
+            # Load from your local path
+            f_name = os.path.basename(filter_path)
+            alma_band = Filter(filter_path)
+            alma_band.name = f_name # Give it your designated nick-name
+            all_filters.append(alma_band) 
+            
+        else:
+            # Load from sedpy internal library
+            f_name = [os.path.basename(filter_path)]
+            print(f_name)
+            all_filters.append(load_filters(f_name))
+    
+    obs['filters'] = all_filters
+    """
+    
+    
+    
+    # After loading your obs, remove ALMA bands
+    obs['filters'] = [f for f in obs['filters'] if 'alma' not in f]
+    
+    for f in obs['filters']:
+        print(f"Filter object type: {type(f)} | Name: {f}")
+
+    obs['filters'] = load_filters(obs['filters'])
+    
+    for f in obs['filters']:
+        print(f"Filter object type: {type(f)} | Name: {getattr(f, 'name', 'N/A')}")
+
+    # You must also mask the corresponding flux/uncertainty indices
+    # so Prospector doesn't try to plot flux that doesn't exist
+    obs['phot_mask'] = obs['phot_mask'][:-1]
+    
+    print(len(obs['filters']), len(obs['phot_mask']))
+    
+    
+    
+    zred, _ = get_zred(objid)
+    logmass = MAP['logmass']
+    dust2 = MAP['dust2']    # extract the diffuse dust V-band optical depth
+    
+    
+    # Calculate the spectrum based on the Maximum A Posteriori (MAP) parameters
+    sps = FastStepBasis(zcontinuous=1)
+
+    # Obtain best fit model spectrum and model photometry    
+    spec, phot, _ = model.predict(map_parameters, obs=obs, sps=sps)
+    
+    # Convert maggies to µJy
+    maggies_to_muJy = 3631e6
+    
+    # Wavelengths of the model spectrum
+    wave_spec = sps.wavelengths
+    
+    # Convert to arrays
+    phot = np.array(phot)
+    
+    # Draw 100 posterior samples
+    samples = posterior_samples(results, 100)
+    
+    sample_specs = []
+    for params_i in samples:
+        spec_i, _, _ = model.predict(params_i, obs=obs, sps=sps)
+        sample_specs.append(spec_i)
+    sample_specs = np.array(sample_specs)  # shape: (nsample, nwave)
+    
+    # Takes the per-pixel percentiles such that the final spectra are not actual spectra of Prospectors parameter space
+    spec_16th = np.percentile(sample_specs, 16, axis=0)
+    spec_median = np.percentile(sample_specs, 50, axis=0)
+    spec_84th = np.percentile(sample_specs, 84, axis=0)
+    
+    # Compute filter wavelength in microns
+    phot_wave = np.array([filt.wave_effective for filt in obs['filters']])  # in Angstroms
+    
+    print("Successfully reconstructed fit...")
+    
+    # Convert to µJy
+    lower_scaled = spec_16th * maggies_to_muJy    
+    median_scaled = spec_median * maggies_to_muJy
+    upper_scaled = spec_84th * maggies_to_muJy
+    spec_scaled = spec * maggies_to_muJy
+    
+    phot_wave_microns = phot_wave * 1e-4  # convert to µm
+    
+    phot = phot[obs['phot_mask']]   # Only plot model photometry for the observed bands
+    phot_scaled = phot * maggies_to_muJy
+    
+    wave_spec_rs = wave_spec * 1e-4 * (1+zred)
+    
+    print("Rescaled data...")
+
+    
+    # Initialise the plot
+    fig, ax = plt.subplots(figsize=(8, 5))
+    
+    # Plot shaded region for 1σ uncertainty
+    ax.fill_between(wave_spec_rs, lower_scaled, upper_scaled, color='crimson', alpha=0.2, label='1σ uncertainty')
+    
+    for spec in sample_specs:
+        ax.plot(wave_spec_rs, spec*maggies_to_muJy, color='crimson', alpha=0.15, lw=0.8)
+    
+    #ax.plot(wave_spec_rs, lower_scaled, color='blue', lw=0.8, label='16th percentile')
+    #ax.plot(wave_spec_rs, upper_scaled, color='blue', lw=0.8, label='84th percentile')
+    #########       PLOT THE BEST FIT      #########
+    
+    ax.plot(wave_spec_rs, spec_scaled, '-', color='crimson', alpha=0.8, lw=1.5, label='Best-fit model')
+    
+    print("Added spectra...")
+
+    
+    #########    PLOT MODEL PHOTOMETRY     #########
+    
+    ax.plot(phot_wave_microns, phot_scaled, 'd', markersize=6, color='black', label='Model photometry')
+    
+    print("Added model photometry...")
+    
+    #########  PLOT MEASURED PHOTOMETRY    #########
+
+    plot_photometry(ax, obs)
+    
+    print("Added observed photometry...")
+    
+    # Compute bounds
+    wave_mask = (wave_spec_rs >= 0.4) & (wave_spec_rs <= 35)
+    
+    # Apply mask to spectrum(s)
+    spec_within = spec_scaled[wave_mask]  # works for 1D or 2D (e.g. percentiles)
+    spec_within = [ele for ele in spec_within if ele > 0]
+
+    print("Masked spectrum...")
+    
+    # Compute y-axis limits
+    ymin = np.nanmin(spec_within)
+    ymax = np.nanmax(spec_within)
+    
+    # Add margin proportionally, protecting against log-scale issues
+    ymin_plot = ymin * 0.2  # reduce, but stay > 0
+    ymax_plot = ymax * 5   # increase
+
+    # Set limits
+    ax.set_ylim(ymin_plot, ymax_plot)
+
+    # Plot formatting
+    ax.set_xlabel('Observed Wavelength [µm]', fontsize=13)
+    ax.set_ylabel('Flux [µJy]', fontsize=13)
+    ax.set_xlim(0.4, 35)#200)    # Change x range    
+    ax.set_xscale('log')
+    ax.set_yscale('log')
+    
+    #ax.set_title(f"Galaxy {objid} at z={np.round(zred,2)}", fontsize=14)
+
+    ax.tick_params(axis='both', which='major', labelsize=13)
+    
+    plt.title(f"Galaxy {objid} with ALMA (z={np.round(zred,2)})", fontsize=14)
+    plt.tight_layout()
+    
+    plt.savefig(fig_path, dpi=300, bbox_inches='tight')
+    print(f"Plot saved to {fig_path}")
+    plt.show()
+    plt.close()

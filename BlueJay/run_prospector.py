@@ -25,7 +25,7 @@ import astropy.table as Table
 def get_zred(galaxy_id):    
     # --- Read Blue Jay catalogue ---
     blue = "/Users/benjamincollins/University/Master/BlueJay/BlueJay_sample.txt"
-    df = pd.read_csv(blue, sep='\s+')  # '\s+' handles whitespace-separated files
+    df = pd.read_csv(blue, sep=r'\s+')  # '\s+' handles whitespace-separated files
 
     # Faster lookup
     row = df.loc[df['id'] == int(galaxy_id)]
@@ -33,31 +33,26 @@ def get_zred(galaxy_id):
     
     # Make sure that the code doesn't crash if it can't find the ID in the catalogue
     if len(row) == 0:   
-        return None, False
+        return None
     
     z_spec = row['z_spec'].values[0]
     
     if z_spec is not None and not np.isnan(z_spec):
-        return z_spec, True
+        return z_spec
     else:
-        z_phot = row['z_phot'].values[0]
-        return z_phot, False
+        None
 
-def flambda_to_maggies(wave_AA, flux):
-
-    flux = flux * 1e-20 * u.erg/u.s/u.AA/u.cm**2
-    fnu = flux * (wave_AA*u.AA)**2 / const.c
-    fnu_Jy = fnu.to(u.Jy)
-    fnu_maggies = fnu_Jy / 3631
-
-    return fnu_maggies.value
-
-
-
-def build_obs(objid, filt_list, mock_fit=False, fit_true_phot=False, **extras):
+def build_obs(objid, filt_list, fit_mock=False, fit_true_phot=False, **extras):
     """
     Modified to read the exact filter ordering from your BlueJay text file
     """
+    
+    if fit_mock:
+        if fit_true_phot:
+            print("Fitting TRUE mock photometry")
+        else:
+            print("Fitting PERTURBED mock photometry")
+    
     # Read the filter paths directly from the text file
     # This automatically strips out newlines and keeps the exact order
     with open(filt_list, "r") as f:
@@ -71,30 +66,15 @@ def build_obs(objid, filt_list, mock_fit=False, fit_true_phot=False, **extras):
         # Get filter name
         filter_name = os.path.basename(path)
         filter_names.append(filter_name)
-        
-        if 'alma_band6' in path:
-            # For custom top-hat text files: load directly using sedpy.observate.Filter
-            custom_filt = sedpy.observate.Filter(filename=path)
-            custom_filt.name = filter_name # Give it your designated nick-name
-            loaded_filters.append(custom_filt)
-            
-        elif 'alma_band7' in path:
-            # For custom top-hat text files: load directly using sedpy.observate.Filter
-            custom_filt = sedpy.observate.Filter(filename=path)
-            custom_filt.name = filter_name # Give it your designated nick-name
-            loaded_filters.append(custom_filt)
-            
-        else:
-            # For native database filters: load via sedpy standard library
-            # load_filters always returns a list, so we grab the first element [0]
-            native_filt = sedpy.observate.load_filters([filter_name])[0]
-            loaded_filters.append(native_filt)
+        native_filt = sedpy.observate.load_filters([filter_name])[0]
+        loaded_filters.append(native_filt)
 
     # Create the obs dictionary and load filters
     obs = {}    
     obs['filters'] = loaded_filters
-
-    if mock_fit:
+    obs['filter_paths'] = raw_filter_paths  # Store the raw filter paths used
+    
+    if fit_mock:
         # Load the mock CSV we created earlier
         path = f"/Users/benjamincollins/University/PhD/Code/bagpipes/BlueJay/data/mocks/{objid}_mock_phot.csv"
         df = pd.read_csv(path)
@@ -136,6 +116,9 @@ def build_obs(objid, filt_list, mock_fit=False, fit_true_phot=False, **extras):
                 flux_jy = row[f'{band}_flux'][0]
                 err_jy = row[f'{band}_flux_err'][0]
                 
+                # Add 5% error floor
+                err_jy = np.max(err_jy, 0.05*flux_jy)
+                
                 # Convert Jy to µJy
                 flux_ujy.append(flux_jy * 1e6)
                 err_ujy.append(err_jy * 1e6)
@@ -152,6 +135,9 @@ def build_obs(objid, filt_list, mock_fit=False, fit_true_phot=False, **extras):
                 # Access the flux and error for the specific band from the filtered row
                 flux_jy = row[f'{band}_flux'][0]
                 err_jy = row[f'{band}_flux_err'][0]
+                
+                # Add 5% error floor
+                err_jy = np.max(err_jy, 0.05*flux_jy)
                 
                 # Convert Jy to µJy
                 flux_ujy.append(flux_jy * 1e6)
@@ -170,6 +156,9 @@ def build_obs(objid, filt_list, mock_fit=False, fit_true_phot=False, **extras):
                 flux_mjy = row['flux'][0]
                 err_mjy = row['flux_err_sim'][0]
                 
+                # Add 5% error floor
+                err_mjy = np.max(err_mjy, 0.05*flux_mjy)
+                
                 # Convert mJy to µJy
                 flux_ujy.append(flux_mjy * 1e3)
                 err_ujy.append(err_mjy * 1e3)
@@ -179,7 +168,7 @@ def build_obs(objid, filt_list, mock_fit=False, fit_true_phot=False, **extras):
                 elif 'band7' in path:
                     phot_waves.append(872.663024 * 1e4)    # Effective wavelength of ALMA band 7
             else:
-                print(f"Warning: Unrecognized filter path '{path}'. Skipping this filter.")
+                print(f"Warning: Unrecognised filter path '{path}'. Skipping this filter.")
 
         obs['phot_wave'] = np.array(phot_waves)
     
@@ -194,11 +183,13 @@ def build_obs(objid, filt_list, mock_fit=False, fit_true_phot=False, **extras):
     obs['phot_mask'] = np.ones(len(loaded_filters), dtype='bool')
     
     # Set elements related to spectral fitting to None
-    obs = fix_obs(obs)
     obs['wavelength'] = None
     obs['spectrum'] = None
     obs['unc'] = None
     obs['mask'] = None
+
+    # Just in case fix the obs
+    obs = fix_obs(obs)
     
     return obs
 
@@ -237,7 +228,7 @@ def logmass_to_masses(logmass=None, logsfr_ratios=None, zred=None, **extras):
     return m1 * coeffs
 
 
-def build_model(objid, zred=None, waverange=None, add_duste=True,
+def build_model(objid, zred=None, fit_mock=False, waverange=None, add_duste=True,
                 add_agn=False, add_neb = True, fit_afe=False,**extras):
     """Build a prospect.models.SedModel object
 
@@ -255,19 +246,15 @@ def build_model(objid, zred=None, waverange=None, add_duste=True,
 
     model_params = {}
     
-    zred, has_spec_z = get_zred(objid)
+    if not fit_mock:
+        zred = get_zred(objid)
     
-    # If a spectroscopic redshift exists, fix it
-    if has_spec_z:
-        model_params['zred'] = {"N": 1, "isfree": False,
-                                "init": zred,
-                                "units": "redshift"}
-    else:   # Otherwise, leave it as a free parameter with a Gaussian prior on the photometric value
-        model_params['zred'] = {"N": 1, "isfree": True,
-                                "init": zred,
-                                "units": "redshift",
-                                "prior": priors.Normal(mean=zred, sigma=0.05)}
-        
+    model_params['zred'] = {"N": 1, "isfree": True,
+                            "init": zred,
+                            "units": "redshift",
+                            "prior": priors.Normal(mean=zred, sigma=0.005)}
+    print("Using a narrow Gaussian redshift prior.")
+    
     model_params['logzsol'] = {"N": 1, "isfree": True,
                                "init": -0.5,
                                "units": r"$\log (Z/Z_\odot)$",
@@ -333,7 +320,7 @@ def build_model(objid, zred=None, waverange=None, add_duste=True,
                                      'prior':priors.StudentT(mean=np.full(nbins-1, 0.0),
                                                              scale=np.full(nbins-1, 0.3), 
                                                              df=np.full(nbins-1, 2))}
-
+    
 
     # ------------------------------
     # --- Initial Mass Function  ---
@@ -519,6 +506,8 @@ if __name__=='__main__':
     # - Add custom arguments -
     parser.add_argument('--objid', type=int, default=0000,
                         help="ID of the object to fit")
+    parser.add_argument('--zred', type=int, default=1.00,
+                        help="Redshift of the source")
     parser.add_argument('--output_tag', type=str, default="mock_test",
                         help="output tag name")          
     parser.add_argument('--add_duste', action="store_true", default=True,
@@ -533,6 +522,8 @@ if __name__=='__main__':
                         help="Path to the filter list file.")
     parser.add_argument('--fit_true_phot', action="store_true", default=False,
                         help="If set, use true photometry for fitting.")
+    parser.add_argument('--fit_mock', action="store_true", default=False,
+                        help="If set, load data from mock catalogue.")
     
 
     args = parser.parse_args()
@@ -565,7 +556,8 @@ if __name__=='__main__':
     #np.save('obs/obs_'+str(run_params["objid"]), obs)
     #print('obs saved')
 
-    zred, is_spec = get_zred(run_params['objid'])
+    #zred, is_spec = get_zred(run_params['objid'])
+    zred, is_spec = 1.00, False
     run_params['zred'] = zred
     
     # build sps
@@ -593,13 +585,12 @@ if __name__=='__main__':
     #hfile = "{0}_{1}_{2}_mcmc.h5".format(
     hfile = "{0}_{1}_mcmc.h5".format(
         run_params["objid"], 
-        run_params["output_tag"]#,
-        #int(time.time())
+        int(time.time())
     )
 
     # Write results to file
     # Note: Make sure a directory called 'output/' exists in your working directory!
-    out_dir = f'comparison/{run_params["output_tag"]}/output/'
+    out_dir = f'prospector/{run_params["output_tag"]}/output/'
     os.makedirs(out_dir, exist_ok=True)
     out_name = os.path.join(out_dir, hfile)
     

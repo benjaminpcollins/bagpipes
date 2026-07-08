@@ -47,12 +47,6 @@ def build_obs(objid, filt_list, fit_mock=False, fit_true_phot=False, **extras):
     Modified to read the exact filter ordering from your BlueJay text file
     """
     
-    if fit_mock:
-        if fit_true_phot:
-            print("Fitting TRUE mock photometry")
-        else:
-            print("Fitting PERTURBED mock photometry")
-    
     # Read the filter paths directly from the text file
     # This automatically strips out newlines and keeps the exact order
     with open(filt_list, "r") as f:
@@ -63,18 +57,29 @@ def build_obs(objid, filt_list, fit_mock=False, fit_true_phot=False, **extras):
     loaded_filters = []
     
     for path in raw_filter_paths:
-        # Get filter name
-        filter_name = os.path.basename(path)
+        # Extract filter filename without ".par" (This is added by sedpy)
+        filter_name = os.path.basename(path).split(".")[0]  
         filter_names.append(filter_name)
-        native_filt = sedpy.observate.load_filters([filter_name])[0]
+        
+        # Get instrument name (e.g. hst, nircam)
+        instrument = path.split("/")[1]
+        
+        # Feed the filter to sedpy
+        native_filt = sedpy.observate.load_filters([filter_name], directory=f"filters/{instrument}")[0]
         loaded_filters.append(native_filt)
-
+    
     # Create the obs dictionary and load filters
     obs = {}    
     obs['filters'] = loaded_filters
     obs['filter_paths'] = raw_filter_paths  # Store the raw filter paths used
     
     if fit_mock:
+        
+        if fit_true_phot:
+            print("Fitting TRUE mock photometry")
+        else:
+            print("Fitting PERTURBED mock photometry")
+        
         # Load the mock CSV we created earlier
         path = f"/Users/benjamincollins/University/PhD/Code/bagpipes/BlueJay/data/mocks/{objid}_mock_phot.csv"
         df = pd.read_csv(path)
@@ -172,6 +177,7 @@ def build_obs(objid, filt_list, fit_mock=False, fit_true_phot=False, **extras):
 
         obs['phot_wave'] = np.array(phot_waves)
     
+    print("Fitting the following bands:")
     for f, w in zip(obs['filters'], obs['phot_wave']):
         print(f"Filter: {f.name} | Effective Wavelength: {w/10000:.2f} µm")
     
@@ -506,7 +512,7 @@ if __name__=='__main__':
     # - Add custom arguments -
     parser.add_argument('--objid', type=int, default=0000,
                         help="ID of the object to fit")
-    parser.add_argument('--zred', type=int, default=1.00,
+    parser.add_argument('--zred', type=float, default=1.00,
                         help="Redshift of the source")
     parser.add_argument('--output_tag', type=str, default="mock_test",
                         help="output tag name")          
@@ -532,8 +538,6 @@ if __name__=='__main__':
     run_params["param_file"] = __file__
     run_params["outfile"] = ""
     
-    # add in dynesty settings
-    run_params['dynesty'] = True
     # Dynesty settings optimised for serial M1 MacBook performance
     run_params['dynesty'] = True
     run_params['nested_nlive_init'] = 1000          # Robust start, easier on RAM
@@ -556,9 +560,9 @@ if __name__=='__main__':
     #np.save('obs/obs_'+str(run_params["objid"]), obs)
     #print('obs saved')
 
-    #zred, is_spec = get_zred(run_params['objid'])
-    zred, is_spec = 1.00, False
-    run_params['zred'] = zred
+    # If we don't run a mock fit we look up the redshift!
+    if not run_params["fit_mock"]:
+        run_params["zred"] = get_zred(run_params['objid'])
     
     # build sps
     sps = build_sps(zred=run_params['zred'], smooth_instrument=False, obs=obs)
@@ -583,9 +587,9 @@ if __name__=='__main__':
 
     # Get unique name for the output file
     #hfile = "{0}_{1}_{2}_mcmc.h5".format(
-    hfile = "{0}_{1}_mcmc.h5".format(
-        run_params["objid"], 
-        int(time.time())
+    hfile = "{0}_mcmc.h5".format(
+        run_params["objid"] 
+        #int(time.time())
     )
 
     # Write results to file

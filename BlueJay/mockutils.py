@@ -88,13 +88,15 @@ def write_alma_transmission_curves(file_path, central_freq_ghz, bandwidth_ghz):
     # Generate a two-column text file for Bagpipes
     output_data = np.column_stack((wavelengths, transmissions))
     
+    filename = file_path + ".par"
+    
     np.savetxt(
-        file_path, 
+        filename, 
         output_data, 
         fmt=['%.4f', '%.1f'], 
         comments=''
     )
-    print(f"💾 Saved tophat filter to: {file_path}")
+    print(f"💾 Saved tophat filter to: {filename}")
     
 
 def extract_true_params(model_components):
@@ -129,3 +131,128 @@ def extract_true_params(model_components):
         params[f"gas_{key}"] = val
         
     return params
+
+
+def make_loader(filtlist, fit_true_phot=False):
+    """
+    A 'factory' that creates a custom loading function 
+    with the selected filters baked into it.
+    """
+    def loader(objid):
+        # Your load_data logic here
+        return load_mock_data(objid, filtlist=filtlist, fit_true_phot=fit_true_phot)
+    
+    return loader
+
+def load_mock_data(objid, filtlist, fit_true_phot=False):    
+    """
+    Load photometry from a mock CSV or real FITS catalogues.
+    
+    objid: The ID of the galaxy
+    data_source: 'mock' or 'real'
+    desired_filters: List of strings (e.g., ['jwst_f444w', 'alma_band6']) 
+                     If None, it loads all available.
+    """
+
+    # Extract the filter names from the filtlist
+    filter_names = [os.path.basename(f) for f in filtlist]
+    
+    # Load the mock CSV we created earlier
+    path = f"/Users/benjamincollins/University/PhD/Code/bagpipes/BlueJay/data/mocks/{objid}_mock_phot.csv"
+    df = pd.read_csv(path)
+        
+    # Reorder the DataFrame to match the filt_list order exactly
+    df = df.set_index('filter_name').reindex(filter_names)
+    
+    # If user provided a specific list of bands, filter the data
+    if fit_true_phot:
+        # Use the true photometry (true_flux) for fitting
+        fluxes = df['true_flux'].values
+        print("⚠️ Using true photometry for fitting.")
+    else:
+        # Use mock photometry for fitting (default)
+        fluxes = df['mock_flux'].values
+        
+    errs = df['flux_err'].values
+
+    # Enforce SNR limits / missing data handling
+    photometry = np.c_[fluxes, errs]
+    for i in range(len(photometry)):
+        if (photometry[i, 0] <= 0.) or (np.isnan(photometry[i, 0])):
+            photometry[i, :] = [0., 9.9e99]
+            
+    return photometry
+
+
+
+def load_bluejay_with_alma(ID):
+    """ 
+    Load BlueJay photometry from the BlueJay catalogue(s)
+        
+        Note: Pay attention to which filtlist you are using 
+        since this determines which ALMA band is specified!
+    
+    """
+
+    # Blue Jay catalogue
+    bluejay_cat = Table.read("data/catalogues/bluejay_phot_cat_v1.4.fits")
+    
+    # 1. List all HST/ACS and NIRCam bands:
+    filters = ['F090W', 'F115W', 'F150W', 'F200W', 'F277W', 'F356W', 'F410M', 'F444W', 'F606W', 'F814W']
+    
+    # 2. Find the correct row using the ID column
+    # Use a mask rather than (int(ID) - 1) to be safe against non-sequential IDs
+    row = bluejay_cat[bluejay_cat['ID'] == int(ID)]
+
+    if len(row) == 0:
+        raise ValueError(f"ID {ID} not found in catalogue.")
+    
+    # 3. Extract fluxes and errors into lists
+    fluxes = []
+    flux_errs = []
+
+    for f in filters:
+        fluxes.append(row[f + "_flux"][0] * 1e6)
+        flux_errs.append(row[f + "_flux_err"][0] * 1e6)
+
+
+    # MIRI catalogue
+    miri_cat = Table.read("data/catalogues/Phot_Table_MIRI.fits")
+    
+    # 1. List all available MIRI bands:
+    miri_filters = ['F770W', 'F1000W', 'F1800W', 'F2100W']
+    
+    # 2. Find the correct row using the ID column
+    # Use a mask rather than (int(ID) - 1) to be safe against non-sequential IDs
+    row = miri_cat[miri_cat['ID'] == int(ID)]
+
+    if len(row) == 0:
+        raise ValueError(f"ID {ID} not found in catalogue.")
+    
+    # 3. Extract fluxes and errors into lists
+    for f in miri_filters:
+        fluxes.append(row[f + "_flux"][0] * 1e6)
+        flux_errs.append(row[f + "_flux_err"][0] * 1e6)
+        
+    # ALMA catalogue
+    alma_cat = Table.read("data/catalogues/ALMA_BlueJay.fits")
+    
+    # 1. Load the ALMA data and check the wavelengths
+    row = alma_cat[alma_cat['ID'] == int(ID)]
+    
+    # 2. Convert fluxes from mJy to microJy (1 mJy = 1000 microJy)
+    fluxes.append(row['flux'][0] * 1e3) 
+    flux_errs.append(row['flux_err_sim'][0] * 1e3)
+    
+    # Now turn these into a 2D array [N_filters, 2]
+    # Bagpipes expects photometry[i, 0] = flux, photometry[i, 1] = error
+    photometry = np.c_[fluxes, flux_errs]
+    
+    # 5. Clean up missing data and enforce SNR limits
+    for i in range(len(photometry)):
+        # Blow up errors for missing data (NaN or 0 flux)
+        if (photometry[i, 0] <= 0.) or (np.isnan(photometry[i, 0])):
+            photometry[i, :] = [0., 9.9e99]
+            continue # Skip SNR check for bad data
+    
+    return photometry

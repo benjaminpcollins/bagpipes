@@ -3,6 +3,7 @@ import glob
 import numpy as np
 import pickle as pkl
 import pandas as pd
+import json
 import prospect.io.read_results as reader
 from prospect.models.transforms import logsfr_ratios_to_sfrs
 from prospect.utils.plotting import get_percentiles, get_best
@@ -42,7 +43,7 @@ from astropy.table import Table
 from sedpy import observate
 
 from scipy.stats import gaussian_kde
-#from scipy.signal import find_peaks
+from scipy.signal import find_peaks
 
 
 # Redshift
@@ -214,7 +215,51 @@ def load_bagpipes_results(galaxy_id, bagp_dir):
     return data
 
 
-def plot_dual_corner(data1, label1, data2, label2, title="Galaxy", mock_data=None, 
+
+
+
+def add_textbox(json_path):
+    # 1. Load the mock parameters
+    with open(json_path, "r") as f:
+        data = json.load(f)
+
+    # 2. Map JSON keys to Labels 
+    # This ensures consistency even if your JSON order changes
+    param_map = [
+        (data["lognormal"]["massformed"], r"$\log_{10}(M_*)$"),
+        (data["lognormal"]["metallicity"], r"$\log_{10}(Z/Z_\odot)$"),
+        (data["dust"]["Av"], r"$A_V$"),
+        (data["dust"]["gamma"], r"Dust $\gamma$"),
+        (data["dust"]["n"], r"Dust Index"),
+        (data["dust"]["qpah"], r"Dust $q_{PAH}$"),
+        (data["dust"]["umin"], r"Dust $U_{min}$"),
+        (data["nebular"]["logU"], r"$\log_{10}(U)$")
+    ]
+
+    # 3. Build the text string
+    real_values = "Mock values:\n\n"
+    for val, label in param_map:
+        # Format floats to 2 decimal places for cleaner looking boxes
+        real_values += f"{label} = {val:.2f}\n"
+
+    # 4. Box styling
+    box_style = dict(
+        boxstyle='round,pad=0.5',
+        facecolor='wheat',
+        edgecolor='orange',
+        alpha=0.5
+    )
+
+    # 5. Place the text in the axes
+    # Use transform=ax.transAxes for relative coordinates (0 to 1) 
+    # instead of hardcoding -5.6, 4.0 which depends on your data range
+    plt.text(-5.9, 3.6, s=real_values, fontsize=28, bbox=box_style) 
+
+    return data["redshift"]
+
+
+
+def plot_dual_corner(data1, label1, data2, label2, title="Galaxy", model_components=None, 
                      colour1="orange", colour2="dodgerblue", fig_path=None):
     """Figure to plot corner plot of two posterior distributions, given that they are stored in the same format.
 
@@ -328,21 +373,8 @@ def plot_dual_corner(data1, label1, data2, label2, title="Galaxy", mock_data=Non
     )
     
     # Only add text box with true parameters if we have mock data!
-    if mock_data:
-        true_params = mock_data["true_params"][()]
-
-        real_values = "Mock values:\n\n"
-        for i, p in enumerate(true_params.values()): # iterating mock_data dictionary
-                real_values += f"{labels[i]}: {p}\n"
-        
-        box_style = dict(
-            boxstyle='round,pad=0.5', # Shapes: 'square', 'round', 'larrow', etc.
-            facecolor='wheat',         # Inside color of the box
-            edgecolor='orange',        # Border color
-            alpha=0.5                  # Transparency (0 to 1)
-        )
-        
-        plt.text(-5.6, 4.0, s=real_values, fontsize=28, bbox=box_style)
+    if model_components:
+        zred = add_textbox(model_components)
     
     ndim = a_samps.shape[1]
     axes = np.array(fig.axes).reshape((ndim, ndim))
@@ -380,11 +412,12 @@ def plot_dual_corner(data1, label1, data2, label2, title="Galaxy", mock_data=Non
         #ax.title.set_color('black') # Or 'darkgrey' to be neutral
     
     
-    
-    fig.suptitle(title, fontsize=32, y=1.0, fontweight="bold")
+    full_title = title + "\n" + r"$z = $" + str(zred)
+    fig.suptitle(full_title, fontsize=32, y=1.0, fontweight="bold")
     
     if fig_path:
         plt.savefig(fig_path, dpi=300, bbox_inches='tight')
+        print(f"Saved dual corner plot to {fig_path}")
         
     plt.show()
     plt.close()
@@ -645,18 +678,18 @@ def plot_photometry(ax, obs, factor=3631e6):
     
     # Define the style per instrument
     instrument_styles = {
-        'acs':     {'color': 'royalblue',   'marker': 'o', 'edgecolor': 'black', 'label': 'HST ACS', 'ms': 10},
-        'nircam':  {'color': 'orange', 'marker': 'p', 'edgecolor': 'black',    'alpha': 0.7, 'label': 'JWST NIRCam', 'ms': 10},
-        'miri':    {'color': 'firebrick',    'marker': 'p', 'edgecolor': 'black',    'alpha': 0.7, 'label': 'JWST MIRI (not used in fit)', 'ms': 10},
-        'alma':    {'color': 'limegreen',  'marker': '*', 'edgecolor': 'black', 'label': 'ALMA', 'ms': 10},
+        'acs':     {'color': 'royalblue',   'marker': 'o', 'edgecolor': 'black', 'label': 'HST/ACS', 'ms': 10},
+        'nircam':  {'color': 'orange', 'marker': 'p', 'edgecolor': 'black',    'alpha': 0.7, 'label': 'JWST/NIRCam', 'ms': 10},
+        'miri':    {'color': 'firebrick',    'marker': 'p', 'edgecolor': 'black',    'alpha': 0.7, 'label': 'JWST/MIRI', 'ms': 10},
+        'alma':    {'color': 'limegreen',  'marker': '^', 'edgecolor': 'black', 'label': 'ALMA', 'ms': 10},
     }
     
     # Get current labels to prevent duplicates
     _, labels = ax.get_legend_handles_labels()
     
-    for i, name in enumerate(obs['filters']):
+    for i, filt in enumerate(obs['filters']):
         
-        print(name)
+        name = filt.name.lower()
         
         wave = obs['phot_wave'][i] * 1e-4  # convert to µm
         flux = obs['maggies'][i] * factor  # µJy
@@ -696,7 +729,7 @@ def plot_photometry(ax, obs, factor=3631e6):
         if style['label'] not in labels:
             labels.append(style['label'])
 
-def plot_fit_prospector(objid, file_path, fig_path, filt_list):
+def plot_fit_prospector(objid, file_path, fig_path, is_mock=False):
     
     try:
         results, obs, model = reader.results_from(file_path)
@@ -716,23 +749,27 @@ def plot_fit_prospector(objid, file_path, fig_path, filt_list):
     backup_obs = obs.copy()    # save this for the plot_photometry function
     
     # After loading your obs, remove ALMA bands
-    obs['filters'] = [f for f in obs['filters'] if 'alma' not in f]
+    #obs['filters'] = [f for f in obs['filters'] if 'alma' not in f]
     
     #for f in obs['filters']:
     #    print(f"Filter object type: {type(f)} | Name: {f}")
 
-    obs['filters'] = load_filters(obs['filters'])
+    #obs['filters'] = load_filters(obs['filters'])
     
     #for f in obs['filters']:
     #    print(f"Filter object type: {type(f)} | Name: {getattr(f, 'name', 'N/A')}")
 
     # You must also mask the corresponding flux/uncertainty indices
     # so Prospector doesn't try to plot flux that doesn't exist
-    obs['phot_mask'] = obs['phot_mask'][:-1]
+    #obs['phot_mask'] = obs['phot_mask'][:-1]
     
     #print(len(obs['filters']), len(obs['phot_mask']))
     
-    zred, _ = get_zred(objid)
+    if is_mock:
+        zred = 1.00
+    else:
+        zred, _ = get_zred(objid)
+        
     logmass = MAP['logmass']
     dust2 = MAP['dust2']    # extract the diffuse dust V-band optical depth
     
@@ -838,21 +875,18 @@ def plot_fit_prospector(objid, file_path, fig_path, filt_list):
     # Plot formatting
     ax.set_xlabel('Observed Wavelength [µm]', fontsize=13)
     ax.set_ylabel('Flux [µJy]', fontsize=13)
-    ax.set_xlim(0.4, 10000)    # Change x range    
+    ax.set_xlim(0.5, 10000)    # Change x range    
     ax.set_xscale('log')
     ax.set_yscale('log')
     
-    ax.legend()
+    ax.legend(loc="upper left")
     
     #ax.set_title(f"Galaxy {objid} at z={np.round(zred,2)}", fontsize=14)
 
     ax.tick_params(axis='both', which='major', labelsize=13)
     
     plt.title(f"Galaxy {objid} with ALMA (z={np.round(zred,2)})", fontsize=14)
-    try:
-        plt.tight_layout()
-    except Exception as e:
-        print(f"tight_layout failed: {e}. Skipping...")
+    plt.tight_layout()
     plt.savefig(fig_path, dpi=300, bbox_inches='tight')
     print(f"Plot saved to {fig_path}")
     plt.show()
